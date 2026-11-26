@@ -1,0 +1,195 @@
+{
+  "traditional": {
+    "eligible_train_range": [
+      20,
+      99
+    ],
+    "target": 100,
+    "transform_count": [
+      1,
+      2
+    ],
+    "brightness": [
+      0.9,
+      1.1
+    ],
+    "contrast": [
+      0.9,
+      1.1
+    ],
+    "blur_sigma": [
+      0.1,
+      0.6
+    ],
+    "blur_kernel": 5,
+    "noise_sigma_255": [
+      1,
+      3
+    ],
+    "rotation_degrees": [
+      -3,
+      3
+    ],
+    "rotation_interpolation": "bilinear",
+    "rotation_padding": "reflection",
+    "operator_order": [
+      "brightness",
+      "contrast",
+      "blur",
+      "noise",
+      "rotation"
+    ],
+    "selection": "uniform_without_replacement",
+    "transform_count_distribution": "uniform",
+    "contrast_mean": "scalar_rgb",
+    "clip_after_each": true,
+    "quantization": "floor_255x_plus_0.5",
+    "source_selection": "deterministic_shuffle_cycle",
+    "seed_namespace": "geo-e1e2-v2"
+  },
+  "diffusion": {
+    "backbone": "Stable Diffusion v1.5",
+    "mode": "img2img",
+    "solver": "DPM-Solver++",
+    "steps": 50,
+    "guidance_scale": 2.0,
+    "batch_size": 1,
+    "precision": "FP32",
+    "amp": false,
+    "strength_candidates": [
+      0.25,
+      0.35,
+      0.5
+    ],
+    "resolution": "native_reflection_pad_8",
+    "textual_inversion": false,
+    "lora": false,
+    "max_attempts": 5,
+    "acceptance": "first_valid",
+    "negative_prompt": "",
+    "tail_multiplier": 5,
+    "tail_max": 100,
+    "singleton_final_synthetic": false,
+    "scheduler": {
+      "class": "DPMSolverMultistepScheduler",
+      "algorithm_type": "dpmsolver++",
+      "solver_order": 2,
+      "solver_type": "midpoint",
+      "timestep_spacing": "linspace",
+      "lower_order_final": true,
+      "thresholding": false,
+      "karras_sigmas": false
+    },
+    "prompt": "A realistic street-level road photograph in {country_name}, look like picture in Google Street View.",
+    "attention": "standard",
+    "xformers": false,
+    "vae_slicing": false,
+    "vae_tiling": false,
+    "vae_posterior": "sample_independent_rng",
+    "encoding": "RGB8_PNG_lossless",
+    "quality_filter": false,
+    "holdout_collision": "block",
+    "seed_namespace": "geo-e1e2-v2"
+  },
+  "cads": {
+    "tau1": 0.5,
+    "tau2": 0.9,
+    "noise_scale": 0.1,
+    "rescale": 1.0,
+    "statistics": "fp32_population_per_embedding_all_tokens",
+    "noise": "independent_standard_normal_per_timestep",
+    "reference_namespace": "geo-e3-ref-v1",
+    "noise_namespace": "geo-e3-cads-v1"
+  },
+  "ccfg": {
+    "temperature": 0.8,
+    "cads_interpolation": 0.8,
+    "distance": "squared_l2_sum_chw",
+    "positive": "cfg_combined"
+  },
+  "mining": {
+    "references_per_class": 20,
+    "model": "facebook/dinov3-vitb16-pretrain-lvd1689m",
+    "revision": "5931719e67bbdb9737e363e781fb0c67687896bc",
+    "batch_size": 32,
+    "precision": "FP32",
+    "processor": "official",
+    "drop_last": false,
+    "tie_break": "smallest_class_id",
+    "zero_norm": "error"
+  },
+  "mixup": {
+    "selected_batch_fraction": 0.5,
+    "lambda_values": [
+      0.0,
+      0.05,
+      0.1,
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.45,
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95,
+      1.0
+    ],
+    "partner": "same_class_real_with_replacement",
+    "before_normalization": true,
+    "namespace": "geo-e3-mixup-v1",
+    "batch_selection": "uniform_without_replacement_floor",
+    "eligible_anchor": "final_synthetic",
+    "labels": "unchanged"
+  },
+  "variants": {
+    "E0": [],
+    "E1E2": [
+      "traditional",
+      "diffusion"
+    ],
+    "A1": [
+      "traditional",
+      "diffusion",
+      "cads"
+    ],
+    "A2": [
+      "traditional",
+      "diffusion",
+      "cads",
+      "mining",
+      "ccfg"
+    ],
+    "A3": [
+      "traditional",
+      "diffusion",
+      "cads",
+      "mining",
+      "ccfg",
+      "geo"
+    ],
+    "A4": [
+      "traditional",
+      "diffusion",
+      "cads",
+      "mining",
+      "ccfg",
+      "geo",
+      "mixup"
+    ]
+  },
+  "geo": {
+    "prompt": "Realistic street-level road photograph in {country_name}. Authentic local architecture, traffic direction, lane markings, road signs, utility poles, vegetation and terrain. Preserve road geometry and geographic identity. Natural variations in lighting, weather and colors.",
+    "negative_prompt": "illustration, cartoon, CGI, blurry, warped geometry, reversed traffic, incorrect lane markings, fake road signs, altered text, distorted vehicles, unrealistic architecture, watermark, compression artifacts",
+    "token_limit": 77,
+    "overflow": "block"
+  }
+}

@@ -1,0 +1,121 @@
+{
+  "classifier": {
+    "model": "EfficientNet-B0",
+    "weights": "IMAGENET1K_V1",
+    "full_backbone": true,
+    "head": [
+      1280,
+      124
+    ],
+    "dropout": 0.2,
+    "batch_size": 128,
+    "input_shape": [
+      3,
+      384,
+      896
+    ],
+    "epochs": 20,
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0001,
+    "precision": "FP32",
+    "amp": false,
+    "optimizer": {
+      "name": "AdamW",
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "amsgrad": false,
+      "maximize": false,
+      "foreach": false,
+      "fused": false,
+      "capturable": false,
+      "differentiable": false,
+      "single_parameter_group": true
+    },
+    "scheduler": {
+      "warmup_epochs": 1,
+      "warmup_start_factor": 0.1,
+      "schedule": "cosine",
+      "min_lr": 1e-06,
+      "step_unit": "optimizer_step",
+      "apply_before_update": true
+    },
+    "loss": {
+      "name": "CrossEntropyLoss",
+      "reduction": "mean",
+      "label_smoothing": 0,
+      "class_weights": false,
+      "focal": false
+    },
+    "runtime": {
+      "device": "single_cuda_gpu",
+      "tf32": false,
+      "grad_scaler": false,
+      "layout": "NCHW",
+      "compile": false,
+      "gradient_accumulation_steps": 1,
+      "gradient_clipping": false,
+      "zero_grad_set_to_none": true,
+      "num_workers": 4,
+      "pin_memory": true,
+      "persistent_workers": false,
+      "prefetch_factor": 2,
+      "drop_last": false,
+      "weighted_sampler": false,
+      "train_shuffle": true,
+      "eval_shuffle": false,
+      "train_replacement": false,
+      "deterministic_algorithms": true,
+      "cudnn_benchmark": false,
+      "cudnn_deterministic": true,
+      "cublas_workspace_config": ":4096:8",
+      "default_mixup": false,
+      "cutmix": false
+    },
+    "preprocessing": {
+      "decoder": "Pillow_EXIF_RGB",
+      "resize": "torchvision_tensor_bilinear_antialias",
+      "canvas_wh": [
+        896,
+        384
+      ],
+      "mean": [
+        0.485,
+        0.456,
+        0.406
+      ],
+      "std": [
+        0.229,
+        0.224,
+        0.225
+      ],
+      "padding": "center_imagenet_mean"
+    }
+  },
+  "dataset": {
+    "images": 49997,
+    "classes": 124,
+    "split_policy": "geolocation_common_split_v2_exact_duplicates",
+    "duplicate_policy": "file_or_decoded_rgb_connected_components",
+    "head_min": 100,
+    "medium_min": 20
+  },
+  "seeds": {
+    "training": [
+      42,
+      123,
+      2026
+    ],
+    "split": 42,
+    "augmentation": 314159
+  },
+  "evaluation": {
+    "ranking": "descending_logit_ascending_class_id",
+    "support": "ground_truth_positive",
+    "checkpoint": "overall_validation_macro_f1_earliest_tie",
+    "aggregation": "three_seed_sample_std",
+    "display": "percent_2_decimals"
+  }
+}

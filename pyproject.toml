@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "geobench"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["numpy", "Pillow", "torch", "torchvision"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+geobench = "geobench.cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

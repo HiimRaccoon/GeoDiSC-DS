@@ -1,0 +1,169 @@
+﻿"""Content-addressed locks with persistent, exclusive writer ownership."""
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import secrets
+import shutil
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _inside(root, path):
+    root = Path(root).resolve()
+    path = Path(path)
+    if path.is_absolute():
+        raise ValueError('absolute artifact path')
+    result = (root / path).resolve()
+    if result == root or not result.is_relative_to(root):
+        raise ValueError('path escapes artifact root')
+    return result
+
+
+def _ownership(root, token):
+    try:
+        claim = json.loads((Path(root) / '.writer' / 'claim.json').read_text(encoding='utf-8'))
+        if not isinstance(token, str) or not hmac.compare_digest(claim['token_sha256'], hashlib.sha256(token.encode()).hexdigest()):
+            raise ValueError('writer token mismatch')
+        return claim['identity']
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError('invalid writer claim') from exc
+
+
+def claim_writer(root, identity, *, token=None, resume=False):
+    if not isinstance(identity, str) or not identity:
+        raise ValueError('writer identity required')
+    root = Path(root).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    claim = root / '.writer'
+    if resume:
+        if _ownership(root, token) != identity:
+            raise ValueError('writer identity mismatch')
+        if not (root / '.staging').is_dir():
+            raise ValueError('incomplete writer claim')
+        return token
+    token = secrets.token_hex(32) if token is None else token
+    if not isinstance(token, str) or not token:
+        raise ValueError('writer token required')
+    claim.mkdir()
+    with (claim / 'claim.json').open('x', encoding='utf-8') as stream:
+        json.dump({'identity': identity, 'token_sha256': hashlib.sha256(token.encode()).hexdigest()}, stream, sort_keys=True)
+        stream.flush()
+        os.fsync(stream.fileno())
+    (root / '.staging').mkdir()
+    return token
+
+
+def staging_path(root, token):
+    _ownership(root, token)
+    return Path(root).resolve() / '.staging'
+
+
+def verify_lock(path, boundary=None, _seen=None):
+    path = Path(path).resolve()
+    boundary = Path(boundary).resolve() if boundary is not None else path.parent
+    if not path.is_relative_to(boundary):
+        raise ValueError('lock escapes trusted root')
+    seen = set() if _seen is None else _seen
+    if path in seen:
+        raise ValueError('cyclic lock dependency')
+    seen.add(path)
+    try:
+        data = json.loads(path.read_text(encoding='utf-8'))
+        if set(data) != {'identity', 'files', 'dependencies', 'artifact_root'} or not isinstance(data['identity'], str) or not data['identity'] or not isinstance(data['files'], dict) or not data['files'] or not isinstance(data['dependencies'], dict):
+            raise ValueError('invalid lock schema')
+        artifact_root = (path.parent / data['artifact_root']).resolve()
+        if not path.is_relative_to(artifact_root) or not artifact_root.is_relative_to(boundary):
+            raise ValueError('lock outside artifact root')
+        for name, digest in data['files'].items():
+            if sha256_file(_inside(path.parent, name)) != digest:
+                raise ValueError('artifact hash mismatch')
+        for name, digest in data['dependencies'].items():
+            dep = _inside(artifact_root, name)
+            if sha256_file(dep) != digest:
+                raise ValueError('dependency hash mismatch')
+            verify_lock(dep, boundary=boundary, _seen=seen)
+        return data
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError('invalid or missing artifact') from exc
+    finally:
+        seen.remove(path)
+
+
+def publish_lock(root, descriptor):
+    root = Path(root).resolve()
+    if not isinstance(descriptor, dict) or set(descriptor) - {'identity', 'files', 'dependencies', 'claim', 'artifact_root'} or not {'identity', 'files', 'dependencies', 'claim'} <= set(descriptor):
+        raise ValueError('invalid descriptor')
+    try:
+        if _ownership(root, descriptor['claim']) != descriptor['identity']:
+            raise ValueError('writer identity mismatch')
+        stage = staging_path(root, descriptor['claim'])
+        artifact_root = Path(descriptor.get('artifact_root', root)).resolve()
+        if not root.is_relative_to(artifact_root):
+            raise ValueError('stage outside artifact root')
+        files = descriptor['files']
+        if not isinstance(files, list) or not files or len(set(files)) != len(files):
+            raise ValueError('unique outputs required')
+        if any(not isinstance(name, str) or not name or name.split('/')[0].startswith('.') or name == 'lock.json' for name in files):
+            raise ValueError('invalid output path')
+        staged = {name: _inside(stage, name) for name in files}
+        outputs = {name: _inside(root, name) for name in files}
+        hashes = {name: sha256_file(path) for name, path in sorted(staged.items())}
+        deps = {}
+        if not isinstance(descriptor['dependencies'], dict):
+            raise ValueError('invalid dependencies')
+        for name, digest in descriptor['dependencies'].items():
+            dep = _inside(artifact_root, name)
+            if sha256_file(dep) != digest:
+                raise ValueError('dependency hash mismatch')
+            verify_lock(dep, boundary=artifact_root)
+            deps[name] = digest
+        data = {'identity': descriptor['identity'], 'files': hashes, 'dependencies': deps,
+                'artifact_root': os.path.relpath(artifact_root, root).replace(os.sep, '/')}
+        if (root / 'lock.json').exists():
+            if verify_lock(root / 'lock.json', boundary=artifact_root) != data:
+                raise ValueError('published lock mismatch')
+            return root / 'lock.json'
+        copies = stage / '.publishing'
+        copies.mkdir(exist_ok=True)
+        for name in sorted(staged):
+            outputs[name].parent.mkdir(parents=True, exist_ok=True)
+            if outputs[name].exists():
+                if sha256_file(outputs[name]) != hashes[name]:
+                    raise ValueError('existing output mismatch')
+                continue
+            copy = copies / hashlib.sha256(name.encode('utf-8')).hexdigest()
+            if not copy.exists():
+                with staged[name].open('rb') as source, copy.open('xb') as target:
+                    shutil.copyfileobj(source, target)
+                    target.flush()
+                    os.fsync(target.fileno())
+            if sha256_file(copy) != hashes[name]:
+                raise ValueError('staged copy mismatch')
+            os.link(copy, outputs[name])
+            copy.unlink()
+        for name, digest in hashes.items():
+            if sha256_file(outputs[name]) != digest:
+                raise ValueError('output changed during publication')
+        temp = root / '.lock.staging'
+        encoded = json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+        if temp.exists():
+            if temp.read_text(encoding='utf-8') != encoded:
+                raise ValueError('staged lock mismatch')
+        else:
+            with temp.open('x', encoding='utf-8', newline='\n') as out:
+                out.write(encoded)
+                out.flush()
+                os.fsync(out.fileno())
+        verify_lock(temp, boundary=artifact_root)
+        os.link(temp, root / 'lock.json')
+        return root / 'lock.json'
+    except (OSError, KeyError, TypeError) as exc:
+        raise ValueError('cannot publish artifact') from exc

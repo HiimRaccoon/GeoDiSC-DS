@@ -1,0 +1,7 @@
+/data/
+/.agents/
+/.local_deps/
+/.pytest_cache/
+/p0-checkout/
+__pycache__/
+*.py[cod]
