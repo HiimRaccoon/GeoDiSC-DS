@@ -1,4 +1,4 @@
-﻿"""Content-addressed locks with persistent, exclusive writer ownership."""
+"""Content-addressed locks with persistent, exclusive writer ownership."""
 import hashlib
 import hmac
 import json
@@ -6,6 +6,52 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+from contextlib import contextmanager
+import threading
+
+_leases = threading.local()
+
+
+@contextmanager
+def active_writer(root):
+    """Process-exit-safe OS lease, reentrant only on the owning thread."""
+    root = Path(root).resolve()
+    held = getattr(_leases, 'held', None)
+    if held is None:
+        held = _leases.held = {}
+    if root not in held:
+        root.mkdir(parents=True, exist_ok=True)
+        stream = (root / '.active-writer').open('a+b')
+        stream.seek(0, 2)
+        if stream.tell() == 0:
+            stream.write(b'0'); stream.flush()
+        stream.seek(0)
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            stream.close()
+            raise ValueError('another writer is active') from exc
+        held[root] = [stream, 0]
+    held[root][1] += 1
+    try:
+        yield
+    finally:
+        held[root][1] -= 1
+        if held[root][1] == 0:
+            stream = held.pop(root)[0]
+            stream.seek(0)
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+            stream.close()
 
 
 def sha256_file(path):
@@ -18,6 +64,8 @@ def sha256_file(path):
 
 def _inside(root, path):
     root = Path(root).resolve()
+    if not isinstance(path, str) or not path or "\\" in path or any(part in {"", ".", ".."} for part in path.split("/")):
+        raise ValueError("noncanonical artifact path")
     path = Path(path)
     if path.is_absolute():
         raise ValueError('absolute artifact path')
@@ -37,7 +85,41 @@ def _ownership(root, token):
         raise ValueError('invalid writer claim') from exc
 
 
+class WriterToken(str):
+    """A token carrying the active lease until publication, close, or unwind."""
+    def close(self):
+        lease = getattr(self, '_lease', None)
+        if lease is not None:
+            self._lease = None
+            getattr(_leases, 'claims', set()).discard(self._root)
+            lease.__exit__(None, None, None)
+
+    def __del__(self):
+        self.close()
+
+
 def claim_writer(root, identity, *, token=None, resume=False):
+    root = Path(root).resolve()
+    claims = getattr(_leases, 'claims', None)
+    if claims is None:
+        claims = _leases.claims = set()
+    if root in claims:
+        raise ValueError('writer claim is already active')
+    lease = active_writer(root)
+    lease.__enter__()
+    try:
+        value = _claim_writer(root, identity, token=token, resume=resume)
+        result = WriterToken(value)
+        result._lease = lease
+        result._root = root
+        claims.add(root)
+        return result
+    except BaseException:
+        lease.__exit__(None, None, None)
+        raise
+
+
+def _claim_writer(root, identity, *, token=None, resume=False):
     if not isinstance(identity, str) or not identity:
         raise ValueError('writer identity required')
     root = Path(root).resolve()
@@ -62,11 +144,22 @@ def claim_writer(root, identity, *, token=None, resume=False):
 
 
 def staging_path(root, token):
+    if Path(root).resolve() not in getattr(_leases, 'held', {}):
+        raise ValueError('staging requires an active writer lease')
     _ownership(root, token)
     return Path(root).resolve() / '.staging'
 
 
 def verify_lock(path, boundary=None, _seen=None):
+    path = Path(path)
+    if path.is_symlink() or path.resolve().name not in {'lock.json', 'pool_lock.json'} or any(part.startswith('.') for part in path.resolve().parts):
+        raise ValueError('not an authoritative published lock target')
+    if path.name not in {"lock.json", "pool_lock.json"} or any(part.startswith(".") for part in path.parts):
+        raise ValueError("not an authoritative published lock")
+    return _validate_lock(path, boundary=boundary, _seen=_seen)
+
+
+def _validate_lock(path, boundary=None, _seen=None):
     path = Path(path).resolve()
     boundary = Path(boundary).resolve() if boundary is not None else path.parent
     if not path.is_relative_to(boundary):
@@ -76,13 +169,21 @@ def verify_lock(path, boundary=None, _seen=None):
         raise ValueError('cyclic lock dependency')
     seen.add(path)
     try:
-        data = json.loads(path.read_text(encoding='utf-8'))
+        from .config import _unique_pairs
+        data = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=_unique_pairs)
         if set(data) != {'identity', 'files', 'dependencies', 'artifact_root'} or not isinstance(data['identity'], str) or not data['identity'] or not isinstance(data['files'], dict) or not data['files'] or not isinstance(data['dependencies'], dict):
             raise ValueError('invalid lock schema')
+        if not isinstance(data['artifact_root'], str) or Path(data['artifact_root']).is_absolute():
+            raise ValueError('invalid root reference')
         artifact_root = (path.parent / data['artifact_root']).resolve()
         if not path.is_relative_to(artifact_root) or not artifact_root.is_relative_to(boundary):
             raise ValueError('lock outside artifact root')
+        for name, digest in list(data['files'].items()) + list(data['dependencies'].items()):
+            if not isinstance(digest, str) or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+                raise ValueError('invalid SHA-256 schema')
         for name, digest in data['files'].items():
+            if not isinstance(name, str) or name.startswith('.') or name in {'lock.json', 'pool_lock.json'}:
+                raise ValueError('reserved output path')
             if sha256_file(_inside(path.parent, name)) != digest:
                 raise ValueError('artifact hash mismatch')
         for name, digest in data['dependencies'].items():
@@ -98,8 +199,18 @@ def verify_lock(path, boundary=None, _seen=None):
 
 
 def publish_lock(root, descriptor):
+    try:
+        with active_writer(root):
+            return _publish_lock(root, descriptor)
+    finally:
+        token = descriptor.get('claim') if isinstance(descriptor, dict) else None
+        if isinstance(token, WriterToken):
+            token.close()
+
+
+def _publish_lock(root, descriptor):
     root = Path(root).resolve()
-    if not isinstance(descriptor, dict) or set(descriptor) - {'identity', 'files', 'dependencies', 'claim', 'artifact_root'} or not {'identity', 'files', 'dependencies', 'claim'} <= set(descriptor):
+    if not isinstance(descriptor, dict) or set(descriptor) - {'identity', 'files', 'dependencies', 'claim', 'artifact_root', 'lock_name'} or not {'identity', 'files', 'dependencies', 'claim'} <= set(descriptor):
         raise ValueError('invalid descriptor')
     try:
         if _ownership(root, descriptor['claim']) != descriptor['identity']:
@@ -127,10 +238,13 @@ def publish_lock(root, descriptor):
             deps[name] = digest
         data = {'identity': descriptor['identity'], 'files': hashes, 'dependencies': deps,
                 'artifact_root': os.path.relpath(artifact_root, root).replace(os.sep, '/')}
-        if (root / 'lock.json').exists():
-            if verify_lock(root / 'lock.json', boundary=artifact_root) != data:
+        lock_name = descriptor.get('lock_name', 'lock.json')
+        if lock_name not in {'lock.json', 'pool_lock.json'}:
+            raise ValueError('invalid published lock name')
+        if (root / lock_name).exists():
+            if verify_lock(root / lock_name, boundary=artifact_root) != data:
                 raise ValueError('published lock mismatch')
-            return root / 'lock.json'
+            return root / lock_name
         copies = stage / '.publishing'
         copies.mkdir(exist_ok=True)
         for name in sorted(staged):
@@ -162,8 +276,9 @@ def publish_lock(root, descriptor):
                 out.write(encoded)
                 out.flush()
                 os.fsync(out.fileno())
-        verify_lock(temp, boundary=artifact_root)
-        os.link(temp, root / 'lock.json')
-        return root / 'lock.json'
+        _validate_lock(temp, boundary=artifact_root)
+        os.link(temp, root / lock_name)
+        temp.unlink()
+        return root / lock_name
     except (OSError, KeyError, TypeError) as exc:
         raise ValueError('cannot publish artifact') from exc

@@ -1,4 +1,4 @@
-﻿import json
+import json
 import pytest
 from geobench.artifacts import claim_writer, staging_path, publish_lock, verify_lock, sha256_file
 from geobench.config import load_config
@@ -177,7 +177,7 @@ def test_failed_prepublication_verification_never_exposes_lock(tmp_path, monkeyp
     (staging_path(tmp_path, token) / 'out').write_text('ok')
     def reject(path, *args):
         raise ValueError('injected verification failure')
-    monkeypatch.setattr(artifacts, 'verify_lock', reject)
+    monkeypatch.setattr(artifacts, '_validate_lock', reject)
     with pytest.raises(ValueError):
         publish_lock(tmp_path, {'identity': 'job', 'files': ['out'], 'dependencies': {}, 'claim': token})
     assert not (tmp_path / 'lock.json').exists()
@@ -245,7 +245,10 @@ def test_interrupted_owner_can_resume_without_overwriting_mismatches(tmp_path):
     (stage / 'a').write_text('first')
     (stage / 'b').write_text('second')
     (tmp_path / 'a').write_text('first')
-    assert claim_writer(tmp_path, 'job', token=owner, resume=True) == owner
+    token.close()
+    resumed = claim_writer(tmp_path, 'job', token=owner, resume=True)
+    assert resumed == owner
+    resumed.close()
     with pytest.raises((FileExistsError, ValueError)):
         claim_writer(tmp_path, 'job', token='other', resume=True)
     lock = publish_lock(tmp_path, {'identity': 'job', 'files': ['a', 'b'], 'dependencies': {}, 'claim': token})
@@ -264,12 +267,29 @@ def test_interrupted_output_mismatch_is_never_repaired(tmp_path):
 
 def test_resolve_run_verifies_frozen_dependencies(tmp_path):
     from geobench.config import resolve_run
-    dep = tmp_path / 'deps'; token = claim_writer(dep, 'dep')
-    (staging_path(dep, token) / 'out').write_text('data')
-    lock = publish_lock(dep, {'identity': 'dep', 'files': ['out'], 'dependencies': {}, 'claim': token})
-    run = tmp_path / 'runs' / 'E0-42'; run.mkdir(parents=True)
-    (run / 'descriptor.json').write_text(json.dumps({'run_id': 'E0-42', 'dependencies': {'deps/lock.json': sha256_file(lock)}}))
-    assert resolve_run(tmp_path, 'E0-42')['run_id'] == 'E0-42'
-    (dep / 'out').write_text('tampered')
-    with pytest.raises(ValueError):
-        resolve_run(tmp_path, 'E0-42')
+    identities = {'data':'common-data:' + 'f'*64, 'runtime':'shared-runtime', 'spec':'spec:E0',
+                  'initialization':'initialization:42', 'pool':'e0:' + 'f'*64}
+    deps = {}
+    for role, identity in identities.items():
+        dep = tmp_path / role; token = claim_writer(dep, identity)
+        (staging_path(dep, token) / 'out').write_text('data')
+        upstream = {'pool':'data','initialization':'runtime'}.get(role)
+        edges = {} if upstream is None else {deps[upstream]['path']:deps[upstream]['sha256']}
+        lock = publish_lock(dep, {'identity':identity,'files':['out'],'dependencies':edges,'claim':token,'artifact_root':tmp_path})
+        deps[role] = {'path':role+'/lock.json','sha256':sha256_file(lock),'identity':identity}
+    run = tmp_path / 'runs/E0/seed_42'; run.mkdir(parents=True)
+    (run/'descriptor.json').write_text(json.dumps({'run_id':'E0/42','condition':'E0','seed':42,'dependencies':deps}))
+    assert resolve_run(tmp_path, 'E0/42')['seed'] == 42
+    pool_lock = tmp_path/'pool/lock.json'
+    original = pool_lock.read_bytes()
+    changed = json.loads(original); changed['dependencies'] = {}
+    pool_lock.write_text(json.dumps(changed))
+    deps['pool']['sha256'] = sha256_file(pool_lock)
+    descriptor = {'run_id':'E0/42','condition':'E0','seed':42,'dependencies':deps}
+    (run/'descriptor.json').write_text(json.dumps(descriptor))
+    with pytest.raises(ValueError, match='lineage'): resolve_run(tmp_path,'E0/42')
+    pool_lock.write_bytes(original); deps['pool']['sha256'] = sha256_file(pool_lock)
+    (run/'descriptor.json').write_text(json.dumps(descriptor))
+
+    (tmp_path/'data/out').write_text('tampered')
+    with pytest.raises(ValueError): resolve_run(tmp_path,'E0/42')

@@ -1,4 +1,4 @@
-﻿"""Inventory and deterministic exact-duplicate-aware fixed split."""
+"""Inventory and deterministic exact-duplicate-aware fixed split."""
 import hashlib
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -132,7 +132,7 @@ def inventory_fingerprint(rows, mapping):
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _verify_publication_readiness(root, fingerprint, dataset_root):
+def _verify_publication_readiness(root, fingerprint, dataset_root, *, _pending=None):
     """Check locked V01/V02/V04 records under deployment/data_readiness.
 
     Each record references locked evidence_files and says status=verified. V01
@@ -145,7 +145,10 @@ def _verify_publication_readiness(root, fingerprint, dataset_root):
     evidence = Path(root).resolve() / 'deployment' / 'data_readiness'
     lock_path = evidence / 'lock.json'
     try:
-        lock = verify_lock(lock_path)
+        if _pending is None:
+            lock = verify_lock(lock_path)
+        else:
+            evidence, lock = _pending
         if lock['identity'] != 'data-readiness' or not {'V01.json', 'V02.json', 'V04.json'} <= lock['files'].keys():
             raise ValueError('invalid data readiness lock')
         records = {name: json.loads((evidence / (name + '.json')).read_text(encoding='utf-8'))
@@ -188,7 +191,29 @@ def _verify_publication_readiness(root, fingerprint, dataset_root):
         raise ValueError('missing or invalid V01/V02/V04 evidence') from exc
 
 
-def prepare_data(dataset_root, root, *, owner_token=None):
+def prepare_data(dataset_root, root, *, owner_token=None, configuration=None):
+    from .artifacts import active_writer
+    if not isinstance(owner_token, str) or not owner_token:
+        raise ValueError('a privately retained owner_token is required for recovery')
+    dataset_root, root = Path(dataset_root).resolve(), Path(root).resolve()
+    if root == dataset_root or root.is_relative_to(dataset_root) or dataset_root.is_relative_to(root):
+        raise ValueError('dataset and artifact roots must be separate')
+    from .config import verified_configuration
+    configuration = verified_configuration() if configuration is None else configuration
+    # Revalidate supplied snapshots; callers cannot bypass the CLI checks.
+    expected = verified_configuration()
+    if configuration['values']['benchmark'] != expected['values']['benchmark'] or configuration['values']['methods'] != expected['values']['methods']:
+        raise ValueError('research config mismatch')
+    import hashlib, json
+    actual = {name: hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+              for name, value in configuration['values'].items()}
+    if actual != configuration['sha256']:
+        raise ValueError('configuration hash mismatch')
+    with active_writer(root):
+        return _prepare_data(dataset_root, root, owner_token=owner_token, configuration=configuration)
+
+
+def _prepare_data(dataset_root, root, *, owner_token=None, configuration=None):
     """Freeze data after verified readiness; retain owner_token to resume safely."""
     import csv
     import io
@@ -247,7 +272,7 @@ def prepare_data(dataset_root, root, *, owner_token=None):
     def write_csv(name, records, fields):
         stream = io.StringIO(newline='')
         writer = csv.DictWriter(stream, fieldnames=fields, lineterminator='\n')
-        writer.writeheader(); writer.writerows(records)
+        writer.writeheader(); writer.writerows({key: str(value).lower() if isinstance(value, bool) else value for key, value in row.items()} for row in records)
         write_exact(name, stream.getvalue())
     fields = list(split[0])
     for name in ('train', 'val', 'test'):
@@ -265,28 +290,92 @@ def prepare_data(dataset_root, root, *, owner_token=None):
                                                          for module in (config, artifacts, images)},
                                        'geobench.data': sha256_file(__file__)})
     supports = {name: sorted({r['class_id'] for r in split if r['split'] == name}) for name in ('val', 'test')}
+    group_by_id = {g['class_id']: g['group'] for g in groups}
+    support_by_group = {}
+    for name in ('val', 'test'):
+        support_by_group[name] = {}
+        for group in ('head', 'medium', 'extreme-tail'):
+            selected = [r for r in split if r['split'] == name and group_by_id[r['class_id']] == group]
+            support_by_group[name][group] = {'classes': sorted({r['class_id'] for r in selected}), 'samples': len(selected)}
     write_json('split_metadata.json', {'policy': POLICY, 'seed': 42, 'fingerprint': fingerprint, 'class_to_idx': mapping,
                                        'counts': counts, 'support_sets': supports,
+                                       'support_by_group': support_by_group,
                                        'duplicate_audit_sha256': sha256_file(stage / 'duplicate_audit.json'),
                                        'source_identity_sha256': sha256_file(stage / 'source_identity.json'),
                                        'decoder': {'library': 'Pillow', 'version': pillow_version, 'exif_transpose': True, 'mode': 'RGB'}})
-    files = ['train.csv', 'val.csv', 'test.csv', 'inventory.csv', 'class_groups.csv', 'duplicate_audit.json', 'source_identity.json', 'split_metadata.json']
+    write_json('configuration.json', configuration)
+    files = ['configuration.json', 'train.csv', 'val.csv', 'test.csv', 'inventory.csv', 'class_groups.csv', 'duplicate_audit.json', 'source_identity.json', 'split_metadata.json']
     data_lock = publish_lock(destination, {'identity': 'common-data:' + fingerprint, 'files': files,
                              'dependencies': {'deployment/data_readiness/lock.json': sha256_file(readiness_lock)},
                              'artifact_root': root, 'claim': token})
-    e0 = root / 'pools' / 'e0'
+    e0 = root / 'pools' / 'E0'
     e0_token = acquire(e0, 'e0:' + fingerprint, 'e0')
-    descriptor = {'sample_type': 'real', 'manifest': str(destination / 'train.csv'),
+    descriptor = {'condition': 'E0', 'total_count': len([r for r in split if r['split'] == 'train']),
+                  'per_class_counts': {str(g['class_id']): g['n_train'] for g in groups},
+                  'non_real_count': 0, 'sample_type': 'real', 'manifest': str(destination / 'train.csv'),
                   'manifest_sha256': sha256_file(destination / 'train.csv'), 'data_lock': str(data_lock)}
     e0_stage = staging_path(e0, e0_token)
     e0_content = (json.dumps(descriptor, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8')
-    e0_descriptor = e0_stage / 'descriptor.json'
+    e0_descriptor = e0_stage / 'pool.json'
     if e0_descriptor.exists():
         if e0_descriptor.read_bytes() != e0_content:
             raise ValueError('existing E0 descriptor mismatch')
     else:
         with e0_descriptor.open('xb') as stream:
             stream.write(e0_content)
-    publish_lock(e0, {'identity': 'e0:' + fingerprint, 'files': ['descriptor.json'],
+    publish_lock(e0, {'identity': 'e0:' + fingerprint, 'files': ['pool.json'], 'lock_name': 'pool_lock.json',
                       'dependencies': {'splits/lock.json': sha256_file(data_lock)}, 'artifact_root': root, 'claim': e0_token})
     return data_lock
+
+
+def publish_readiness(dataset_root, root, records, evidence_files, *, owner_token):
+    """Import operator observations, validating before persistent claims.
+
+    No network checks run here. Fixtures exercise this interface with simulated
+    observations. Production records must contain actual site/audit evidence.
+    """
+    import json, tempfile
+    from .artifacts import active_writer, claim_writer, staging_path, publish_lock, _inside
+    if not isinstance(owner_token, str) or not owner_token:
+        raise ValueError('a privately retained owner_token is required')
+    root, dataset_root = Path(root).resolve(), Path(dataset_root).resolve()
+    if root == dataset_root or root.is_relative_to(dataset_root) or dataset_root.is_relative_to(root):
+        raise ValueError('dataset and artifact roots must be separate')
+    rows, mapping = inventory(dataset_root, IMAGE_EXTENSIONS)
+    if len(rows) != EXPECTED_IMAGES or len(mapping) != EXPECTED_CLASSES:
+        raise ValueError('dataset inventory differs from confirmed counts')
+    split_inventory(rows)
+    fingerprint = inventory_fingerprint(rows, mapping)
+    if not isinstance(records, dict) or set(records) != {'V01', 'V02', 'V04'}:
+        raise ValueError('readiness requires exactly V01/V02/V04 records')
+    with tempfile.TemporaryDirectory() as temporary:
+        pending = Path(temporary)
+        files = []
+        for name, content in evidence_files.items():
+            if name in {'V01.json', 'V02.json', 'V04.json'} or not isinstance(content, bytes):
+                raise ValueError('invalid supporting evidence')
+            path = _inside(pending, name); path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content); files.append(name)
+        for name, record in records.items():
+            filename = name + '.json'
+            (pending / filename).write_text(json.dumps(record, sort_keys=True, allow_nan=False), encoding='utf-8')
+            files.append(filename)
+        _verify_publication_readiness(root, fingerprint, dataset_root,
+                                      _pending=(pending, {'identity':'data-readiness','files':dict.fromkeys(files)}))
+        destination = root / 'deployment/data_readiness'
+        with active_writer(root):
+            token = claim_writer(destination, 'data-readiness', token=owner_token,
+                                 resume=(destination / '.writer').exists())
+            try:
+                stage = staging_path(destination, token)
+                for name in files:
+                    path = _inside(stage, name); content = (pending/name).read_bytes()
+                    if path.exists():
+                        if path.read_bytes() != content:
+                            raise ValueError('staged readiness evidence mismatch')
+                    else:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        with path.open('xb') as stream: stream.write(content)
+                return publish_lock(destination, {'identity':'data-readiness','files':files,'dependencies':{},'claim':token})
+            finally:
+                token.close()

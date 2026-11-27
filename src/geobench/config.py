@@ -1,4 +1,4 @@
-﻿"""Confirmed research settings and separately scoped deployment inputs."""
+"""Confirmed research settings and separately scoped deployment inputs."""
 import json
 from pathlib import Path
 
@@ -118,32 +118,88 @@ def load_config(path: Path) -> dict:
     return config
 
 
+def verified_configuration(benchmark=None, methods=None, deployment=None):
+    import hashlib
+    base = Path(__file__).resolve().parents[2] / 'configs'
+    paths = {'benchmark': benchmark or base / 'benchmark.json',
+             'methods': methods or base / 'methods.json', 'deployment': deployment or base / 'uit.json'}
+    values = {name: load_config(path) for name, path in paths.items()}
+    if values['benchmark'] != RESEARCH or values['methods'] != METHODS or set(values['deployment']) != DEPLOYMENT_KEYS:
+        raise ValueError('configuration role mismatch')
+    hashes = {name: hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+              for name, value in values.items()}
+    return {'values': values, 'sha256': hashes}
+
+
 def resolve_run(root: Path, run_id: str) -> dict:
     from .artifacts import sha256_file, verify_lock
-    if not run_id or '/' in run_id or '\\' in run_id or Path(run_id).name != run_id or run_id in ('.', '..'):
-        raise ValueError('invalid run identity')
+    conditions = {'E0', 'E1E2', 'E3-A1', 'E3-A2', 'E3-A3', 'E3-A4'}
+    parts = run_id.split('/')
+    if len(parts) != 2 or parts[0] not in conditions or parts[1] not in {'42', '123', '2026'}:
+        raise ValueError('invalid official run identity')
+    condition, seed = parts[0], int(parts[1])
     root = Path(root).resolve()
-    path = (root / 'runs' / run_id / 'descriptor.json').resolve()
+    path = (root / 'runs' / condition / f'seed_{seed}' / 'descriptor.json').resolve()
     if not path.is_relative_to(root):
         raise ValueError('run descriptor escapes artifact root')
     with path.open(encoding='utf-8') as stream:
         descriptor = json.load(stream, object_pairs_hook=_unique_pairs)
-    if not isinstance(descriptor, dict) or descriptor.get('run_id') != run_id:
-        raise ValueError('run identity mismatch')
-    dependencies = descriptor.get('dependencies')
-    if not isinstance(dependencies, dict) or not dependencies:
-        raise ValueError('run dependencies are required')
-    for name, expected in dependencies.items():
-        if not isinstance(name, str) or not isinstance(expected, str):
-            raise ValueError('invalid dependency')
-        relative = Path(name)
-        dependency = (root / relative).resolve()
+    if (not isinstance(descriptor, dict) or set(descriptor) != {'run_id', 'condition', 'seed', 'dependencies'}
+            or descriptor['run_id'] != run_id or descriptor['condition'] != condition
+            or type(descriptor['seed']) is not int or descriptor['seed'] != seed):
+        raise ValueError('run descriptor identity/schema mismatch')
+    required = {'data', 'pool', 'runtime', 'initialization', 'spec'}
+    if condition != 'E0':
+        required |= {'strength', 'e1'}
+    if condition.startswith('E3-'):
+        required |= {'references'}
+    if condition in {'E3-A2', 'E3-A3', 'E3-A4'}:
+        required |= {'mining'}
+    dependencies = descriptor['dependencies']
+    if not isinstance(dependencies, dict) or set(dependencies) != required:
+        raise ValueError('required run dependency roles mismatch')
+    identities = {'runtime': 'shared-runtime', 'initialization': f'initialization:{seed}',
+                  'spec': f'spec:{condition}', 'strength': 'selected-strength', 'e1': 'e1',
+                  'references': 'reference-bank', 'mining': 'mining'}
+    verified = {}
+    for role, record in dependencies.items():
+        if not isinstance(record, dict) or set(record) != {'path', 'sha256', 'identity'}:
+            raise ValueError('invalid dependency record')
+        if any(not isinstance(value, str) or not value for value in record.values()):
+            raise ValueError('invalid dependency value')
+        identity = record['identity']
+        if role == 'data':
+            if not identity.startswith('common-data:') or len(identity.removeprefix('common-data:')) != 64:
+                raise ValueError('invalid data dependency identity')
+        elif role == 'pool':
+            expected_pool = ('e0:' + dependencies['data']['identity'].removeprefix('common-data:')
+                             if condition == 'E0' else 'pool:' + ('E3-A3' if condition == 'E3-A4' else condition))
+            if identity != expected_pool:
+                raise ValueError('wrong condition pool dependency')
+        elif identity != identities[role]:
+            raise ValueError('wrong dependency role/seed identity')
+        relative = Path(record['path']); dependency = (root / relative).resolve()
         if relative.is_absolute() or not dependency.is_relative_to(root):
             raise ValueError('dependency escapes artifact root')
         try:
-            if sha256_file(dependency) != expected:
+            if sha256_file(dependency) != record['sha256']:
                 raise ValueError('run dependency hash mismatch')
-            verify_lock(dependency, boundary=root)
+            lock = verify_lock(dependency, boundary=root)
+            verified[role] = lock
+            if lock['identity'] != record['identity']:
+                raise ValueError('run dependency identity mismatch')
         except OSError as exc:
             raise ValueError('missing run dependency') from exc
+    lineage = {'pool': {'data'}, 'initialization': {'runtime'}}
+    if condition != 'E0': lineage['pool'] |= {'strength', 'e1'}
+    if condition.startswith('E3-'): lineage['pool'] |= {'references'}
+    if condition in {'E3-A2','E3-A3','E3-A4'}: lineage['pool'] |= {'mining'}
+    if 'references' in verified: lineage['references'] = {'data','strength'}
+    if 'mining' in verified: lineage['mining'] = {'references'}
+    for consumer, upstreams in lineage.items():
+        edges = verified[consumer]['dependencies']
+        for upstream in upstreams:
+            record = dependencies[upstream]
+            if edges.get(record['path']) != record['sha256']:
+                raise ValueError('inconsistent run dependency lineage')
     return descriptor

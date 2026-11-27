@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import pytest
 import torch
 from PIL import Image, PngImagePlugin
@@ -109,12 +109,36 @@ def test_fixture_data_publication_has_locked_manifests(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         data.prepare_data(dataset, root, owner_token='wrong-owner')
     lock = data.prepare_data(dataset, root, owner_token='fixture-owner')
+    import hashlib
+    snapshot = json.loads((root/'splits/configuration.json').read_text())
+    for name, value in snapshot['values'].items():
+        assert snapshot['sha256'][name] == hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
+    pool = json.loads((root/'pools/E0/pool.json').read_text())
+    assert pool['condition'] == 'E0' and pool['non_real_count'] == 0
+    import csv
+    with (root/'splits/train.csv').open() as stream:
+        assert all(row['is_synthetic'] == 'false' for row in csv.DictReader(stream))
+    second_root = tmp_path/'second-artifacts'
+    records['V02']['artifact_root'] = str(second_root.resolve())
+    evidence_files = {name+'-evidence.txt': b'fixture evidence' for name in records}
+    produced = data.publish_readiness(dataset, second_root, records, evidence_files, owner_token='readiness-owner')
+    assert verify_lock(produced)['identity'] == 'data-readiness'
+    assert data.publish_readiness(dataset, second_root, records, evidence_files, owner_token='readiness-owner') == produced
+    invalid_root = tmp_path/'invalid-readiness'
+    records['V02']['artifact_root'] = str(invalid_root.resolve())
+    records['V01']['status'] = 'pending'
+    with pytest.raises(ValueError):
+        data.publish_readiness(dataset, invalid_root, records, evidence_files, owner_token='bad-evidence')
+    assert not (invalid_root/'deployment/data_readiness/lock.json').exists()
+    records['V01']['status'] = 'verified'
+
+    assert data._verify_publication_readiness(second_root, data.inventory_fingerprint(rows,mapping), dataset)
     info = verify_lock(lock, boundary=root)
     assert {'train.csv', 'val.csv', 'test.csv', 'class_groups.csv', 'split_metadata.json'} <= set(info['files'])
     metadata = json.loads((root / 'splits/split_metadata.json').read_text(encoding='utf-8'))
     assert metadata['duplicate_audit_sha256'] == info['files']['duplicate_audit.json']
     assert 'source_identity.json' in info['files']
-    assert verify_lock(tmp_path / 'artifacts/pools/e0/lock.json', boundary=root)
+    assert verify_lock(tmp_path / 'artifacts/pools/E0/pool_lock.json', boundary=root)
 
 
 def test_empty_class_rejected(tmp_path):

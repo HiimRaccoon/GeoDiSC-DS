@@ -1,4 +1,4 @@
-﻿"""Commands implemented in the P0 phase."""
+"""Commands implemented in the P0 phase."""
 import argparse
 import json
 import os
@@ -15,10 +15,14 @@ def main(argv=None):
     prepare = commands.add_parser('prepare-data')
     prepare.add_argument('--dataset-root', required=True, type=Path)
     prepare.add_argument('--root', required=True, type=Path)
+    for name in ('benchmark', 'methods', 'deployment'):
+        prepare.add_argument('--' + name + '-config', type=Path)
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
     elif args.command == 'prepare-data':
+        from .config import verified_configuration
+        configuration = verified_configuration(args.benchmark_config, args.methods_config, args.deployment_config)
         from .data import prepare_data
-        print(prepare_data(args.dataset_root, args.root, owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+        print(prepare_data(args.dataset_root, args.root, owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN'), configuration=configuration))
     return 0
