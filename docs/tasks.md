@@ -56,6 +56,12 @@ Evidence: full regression suite **72 passed** on 2026-11-27. Metrics/research co
 
 Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and interrupted data/E0 staging recovery. Research configuration files, metrics and working research behavior are unchanged. Actual UIT verification remains outstanding. No P1 implementation, Slurm jobs or history rewrite.
 
+## P1 progress and recovery issue
+
+- P1 remains incomplete: initial profile validation, deterministic job seed/source ordering, and common learning-rate schedule primitives have fixture tests; T04–T06 and G-P1 remain unchecked.
+- Read-only SSH reached the configured login alias on 2026-11-27; environment and home filesystem were inspected. This does not close V01–V06 or verify project paths, model access, quotas, compute-node access or GPU workloads.
+- **T06/T10 recovery hardening:** interruption after `.writer` directory creation but before claim metadata and staging initialization leaves an incomplete persistent claim. Never reclaim it using a local PID check; define and verify an explicit owner-authorized recovery mechanism before claiming T06/T10 recovery complete.
+
 ## P1 — Runtime, generation and shared training
 
 ### T04 — UIT inspection and preflight orchestration
