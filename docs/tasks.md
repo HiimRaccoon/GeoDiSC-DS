@@ -64,6 +64,12 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ## P1 — Runtime, generation and shared training
 
+### T04 progress — fixture interfaces only
+
+- Added the `preflight` CLI and immutable pending inspection report, local interpreter/package and storage observation helpers, pinned snapshot hash/inventory checks, role-scoped evidence integrity checks, prompt-overflow audit, and Slurm-only shared-provider dispatch. Generic locked evidence is recorded as present, not automatically verified; roles remain blocked pending role-specific conformance.
+- Fixture tests: `tests/test_preflight.py` **17 passed**; full regression suite **110 passed**. Real login/Conda inspection on 2026-11-27 observed Python 3.11.18 and installed package metadata. No compute-node, model-snapshot, tokenizer, quota or GPU evidence has been verified.
+- **Still required:** actual site/storage/environment orchestration and evidence creation, full snapshot component/processor verification and immutable staging, role-specific conformance validators and readiness transitions, complete production GPU probe contracts, and end-to-end P0 readiness integration. T04 and all V-gates remain unchecked. The current snapshot checker rejects symlinks, including ordinary linked model caches, until safe cache support is implemented.
+
 ### T04 — UIT inspection and preflight orchestration
 
 **Depends on:** T01; probes additionally their actual providers T02/T05–T08 and T10. **Targets:** `src/geobench/preflight.py`, `configs/uit.json`, `tests/{test_config_artifacts,test_slurm_contract}.py`; persistent `deployment/` evidence.

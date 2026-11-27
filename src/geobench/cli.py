@@ -17,6 +17,9 @@ def main(argv=None):
     prepare.add_argument('--root', required=True, type=Path)
     for name in ('benchmark', 'methods', 'deployment'):
         prepare.add_argument('--' + name + '-config', type=Path)
+    preflight = commands.add_parser('preflight')
+    preflight.add_argument('--root', required=True, type=Path)
+    preflight.add_argument('--profile', type=Path)
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
@@ -25,4 +28,11 @@ def main(argv=None):
         configuration = verified_configuration(args.benchmark_config, args.methods_config, args.deployment_config)
         from .data import prepare_data
         print(prepare_data(args.dataset_root, args.root, owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN'), configuration=configuration))
+    elif args.command == 'preflight':
+        from .preflight import inspect_deployment
+        token = os.environ.get('GEOBENCH_OWNER_TOKEN')
+        if not token:
+            raise ValueError('GEOBENCH_OWNER_TOKEN is required')
+        profile = None if args.profile is None else json.loads(args.profile.read_text(encoding='utf-8'))
+        print(inspect_deployment(args.root, {'profile': profile}, owner_token=token))
     return 0
