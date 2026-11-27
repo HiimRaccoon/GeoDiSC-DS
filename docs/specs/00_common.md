@@ -429,4 +429,4 @@ Các điều kiện sau là hợp đồng cho implementation sau này, chưa ph�
 11. Fairness locks xác minh shared E0/E1 pools, tail budgets, selected strength, A2 cache và cùng A3/A4 synthetic membership/optimizer steps.
 12. Official matrix có đúng 6 conditions × 3 seeds = 18 classifier run identities; tuning có đủ 3 strengths × 3 seeds và selection theo mean Validation Tail Macro F1. Chỉ cả ba verified selected-strength executions được bind làm official E1E2 theo mục 9.3, không đếm hai lần; unselected runs vẫn là tuning-only.
 
-Common Spec quy định các hợp đồng dùng chung; realization và confirmed decisions của E1E2 nằm trong `02_E1E2_hybrid_baseline.md`. Các spec nhánh và implementation artifacts phải tham chiếu đúng common version, không thay các invariants đã khóa. Chưa triển khai code hoặc chạy experiments.
+Common Spec quy định các hợp đồng dùng chung; realization và confirmed decisions của E1E2 nằm trong `02_E1E2_hybrid_baseline.md`. Các spec nhánh và implementation artifacts phải tham chiếu đúng common version, không thay các invariants đã khóa. Theo dõi tiến độ code và bằng chứng thực nghiệm trong tasks.md; specification không tự chứng minh completion.

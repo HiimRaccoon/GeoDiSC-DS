@@ -23,7 +23,7 @@ Các cấu hình dùng chung được kế thừa nguyên vẹn, không có E1E2
 
 **E2 là Base chính thức của E3 ablation.** Kết quả classifier E1E2 sau khi chọn strength được dùng trực tiếp làm Base; không có official condition E2-only, E3-A0 hoặc một lượt Base chạy lại riêng cho E3.
 
-Đã đối chiếu Section IV/VII.1 của Markdown tổng thể và Common Spec hiện tại. Phần cấu hình tại mục 2–4 giữ đúng các giá trị nguồn; mục 11 ghi các quyết định triển khai đã được người dùng xác nhận. Không thay nghiên cứu, quota, base prompt hoặc các thông số đã khóa trong master Markdown. Xác nhận này chỉ chốt specification, chưa triển khai code hoặc thực thi experiments.
+Đã đối chiếu Section IV/VII.1 của Markdown tổng thể và Common Spec hiện tại. Phần cấu hình tại mục 2–4 giữ đúng các giá trị nguồn; mục 11 ghi các quyết định triển khai đã được người dùng xác nhận. Không thay nghiên cứu, quota, base prompt hoặc các thông số đã khóa trong master Markdown. Xác nhận này chỉ chốt specification; trạng thái implementation và experiments được theo dõi riêng trong tasks.md.
 
 ## 2. Training membership và quota
 
@@ -451,4 +451,4 @@ Cho phép verified reuse cả ba completed executions tại `s*` làm official E
 
 Theo xác nhận của người dùng ngày 2026-11-26: **D01, D03–D08 CONFIRMED as proposed; D02, D09, D10 CONFIRMED with revisions** trong v1.2. Không còn pending design decision trong D01–D10. Mọi resolved config phải phản ánh các giá trị này và liên kết spec/Common Spec versions tương ứng.
 
-Model revision, file hashes, backend versions và cụ thể hóa API-compatible coordinate/RNG conventions vẫn phải được materialize trước thực thi; đây là artifact identity/numerical realization, không cho phép đổi confirmed policy hoặc dùng kết quả experiments để chọn settings. Các thay đổi chính sách về sau phải có version/decision record mới. Spec này chưa triển khai code hoặc khởi chạy experiments.
+Model revision, file hashes, backend versions và cụ thể hóa API-compatible coordinate/RNG conventions vẫn phải được materialize trước thực thi; đây là artifact identity/numerical realization, không cho phép đổi confirmed policy hoặc dùng kết quả experiments để chọn settings. Các thay đổi chính sách về sau phải có version/decision record mới. Spec này không tự chứng minh code hoặc experiments đã hoàn tất; xem tasks.md.

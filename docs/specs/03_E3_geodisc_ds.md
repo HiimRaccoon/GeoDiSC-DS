@@ -7,7 +7,7 @@
 **Ngày:** 2026-11-26\
 **Official condition IDs:** `E3-A1`, `E3-A2`, `E3-A3`, `E3-A4`\
 **Phạm vi:** CADS, DINOv3 Visual Confuser Mining + CCFG, Geo-preservation và Real–Synthetic Mixup.\
-**Trạng thái:** G01–G10 đã CONFIRMED theo xác nhận người dùng. Static inspection của official DiSC-DS đã hoàn tất; các verification/materialization requirements chưa thực hiện được tách riêng tại mục 13.3. Chưa triển khai code, sinh ảnh hoặc huấn luyện.
+**Trạng thái:** G01–G10 đã CONFIRMED theo xác nhận người dùng. Static inspection của official DiSC-DS đã hoàn tất; các verification/materialization requirements chưa thực hiện được tách riêng tại mục 13.3. Theo dõi implementation và actual generation/training evidence riêng trong tasks.md.
 
 ## 1. Nguồn yêu cầu và thiết kế ablation
 

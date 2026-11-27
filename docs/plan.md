@@ -323,9 +323,9 @@ Mỗi task thực hiện vòng nhỏ: ghi fixture/assertions → thấy failure 
 
 - [ ] Thêm assertions invalid profile/QoS/GRES mapping bị reject, unknown CPU/RAM/root/walltime không trở thành silent defaults; classifier research settings không đổi khi profile chuyển mig3→mig7.
 - [ ] Run relevant tests để có failure rồi implement read-only inspection/probe orchestration; model downloads/cache access theo immutable revisions, không secrets trong logs.
-- [ ] Trên UIT, inspect existing env và site/storage inputs sớm; sau khi Tasks 5–8 cung cấp real workload paths, thực hiện GPU checks mục 3 bằng Slurm allocations. Actual memory/throughput, paths/quota và max walltime phải được ghi thành evidence, không giả định.
-- [ ] Materialize SD1.5/DINOv3 snapshots, processor identity và all-prompt token audit; overflow/access failure block đúng stage, không tự sửa prompts hoặc dùng fallback model.
-- [ ] Freeze deployment/shared runtime chỉ sau checks pass; reset/hủy probe state. Review/commit source, giữ machine-specific reports dưới artifact root.
+- [ ] Deployment only, after T01–T11 local integration: trên UIT inspect existing env và site/storage inputs; sau khi Tasks 5–8 cung cấp real workload paths, thực hiện GPU checks mục 3 bằng Slurm allocations. Actual memory/throughput, paths/quota và max walltime phải được ghi thành evidence, không giả định.
+- [ ] Implementation: support immutable SD1.5/DINOv3 snapshot/processor verification and all-prompt audits using fixtures; deployment: materialize and verify actual snapshots/processor and audit actual tokenizer; overflow/access failure block đúng stage, không tự sửa prompts hoặc dùng fallback model.
+- [ ] Deployment only: freeze deployment/shared runtime chỉ sau actual checks pass; reset/hủy probe state. Review/commit source, giữ machine-specific reports dưới artifact root.
 
 ### Task 5 — E1 và E2 deterministic pool generation
 
@@ -336,7 +336,7 @@ Mỗi task thực hiện vòng nhỏ: ghi fixture/assertions → thấy failure 
 - [ ] Thêm deterministic assertions confirmed E1 operators/ranges/order, no repeated transform; shuffle-cycle uses every source before next cycle; same `(class,slot,attempt)` across strengths giữ source/VAE/latent seeds.
 - [ ] Thêm first-valid tests: rejected attempts 0/1, valid attempt 2 → accepted index 2, không execute 3/4; all five fail → shortage/no lock; holdout collision block, infrastructure retry không reset cap.
 - [ ] Chạy `pytest tests/test_traditional.py tests/test_diffusion_jobs.py -q` để thấy failures; implement E1 operations và shared E2 native VAE/scheduler loop, PNG/read-back hash/QC/ledger, no semantic filtering.
-- [ ] Chạy lại tests expected PASS, rồi tiny actual-model training-source generation trong deployment checks; numerical output/dimensions/config phải khớp, không dùng val/test score.
+- [ ] Implementation: chạy lại local tests expected PASS with mocked components. Deployment only: tiny actual-model training-source generation; numerical output/dimensions/config phải khớp, không dùng val/test score.
 - [ ] Review/commit và freeze đủ quotas; incomplete pool không được cấp cho tuning.
 
 ### Task 6 — Shared classifier training, initialization và resume
@@ -348,7 +348,7 @@ Mỗi task thực hiện vòng nhỏ: ghi fixture/assertions → thấy failure 
 - [ ] Thêm assertions cùng seed load cùng initial state cho mọi condition; last batch được giữ; committed anchor coverage và steps đúng pool size/common scheduler, validation RNG không làm lệch train sampler.
 - [ ] Thêm uninterrupted-vs-resumed fixture: model/optimizer/scheduler/RNG/history sau resume khớp uninterrupted trong deterministic fixture; interrupted epoch replay, incompatible identity bị reject, exact validation-score tie chọn earliest epoch.
 - [ ] Chạy `pytest tests/test_training_resume.py -q` để có failures; implement full common config, validation calls shared metrics và atomic last/best state đủ recover auxiliary outputs.
-- [ ] Run tests expected PASS; smoke short fixture trên GPU chỉ trong Slurm, không thay official epochs để gọi đó là official run. Exit success chỉ sau full declared schedule/lock.
+- [ ] Implementation: run local tests expected PASS. Deployment only: smoke short fixture trên GPU chỉ trong Slurm, không thay official epochs để gọi đó là official run. Exit success chỉ sau full declared schedule/lock.
 - [ ] Review/commit; runtime/initialization locks phải có trước official E0 hoặc tuning jobs.
 
 ### Task 7 — CADS/CCFG/Geo sampling realization
@@ -373,7 +373,7 @@ Mỗi task thực hiện vòng nhỏ: ghi fixture/assertions → thấy failure 
 - [ ] Thêm G09 tests: reference candidate trùng frozen E2 final bị reject/retry reference slot, E2 lock không đổi; A1/A2/A3 final trùng bank bị reject trong cùng 5-attempt cap; bank required cho final acceptance nhưng A1 không load DINO/confusers.
 - [ ] Thêm Mixup assertions uniform no-replacement batch subset đúng floor(0.5L), partner cùng class/replacement, 21 lambda endpoints, mix trước normalization, chỉ eligible synthetic bị thay; labels/anchors/optimizer steps và A3 pool hash không đổi.
 - [ ] Run `pytest tests/test_mining_mixup.py -q` để thấy failures; implement frozen pinned DINOv3/official processor FP32 batch32, `.npy`/row mappings/caches và independent mixing RNG/checkpoint state; run lại expected PASS.
-- [ ] Review/commit; actual feature/model/token verification V01/V02 và JSONL/array artifacts V04 vẫn cần server evidence, không dùng fixtures thay real reference bank lock.
+- [ ] Implementation: review, commit and locally test fixture artifacts. Deployment: actual feature/model/token verification V01/V02 and JSONL/array artifacts V04 need server evidence; fixtures do not replace a real reference-bank lock.
 
 ### Task 9 — Strength search, official binding và frozen method pools
 
@@ -395,7 +395,7 @@ Mỗi task thực hiện vòng nhỏ: ghi fixture/assertions → thấy failure 
 
 - [ ] Thêm assertions index→run mapping ổn định, profile/QoS/GRES đúng table, unknown walltime/CPU/RAM reject, incomplete/resumable stage không release success; duplicate submission không được hai writers.
 - [ ] Implement thin templates/wrapper theo mục 4; planned shell check `bash -n scripts/slurm/cpu.sbatch scripts/slurm/gpu.sbatch scripts/slurm/submit.sh` expected zero errors, không run GPU ở login.
-- [ ] Run `pytest tests/test_slurm_contract.py -q` expected PASS và kiểm tra scheduler parser/site flags trên UIT bằng harmless validation/smoke job, không official training.
+- [ ] Implementation: run `pytest tests/test_slurm_contract.py -q` expected PASS. Deployment only: kiểm tra scheduler parser/site flags trên UIT bằng harmless validation/smoke job, không official training.
 - [ ] Verify signal forwarding/timeout/requeue với fixture job trên compute node: persistent checkpoint được giữ, restart cùng descriptor, downstream không consume incomplete lock; re-submit dependencies dùng current job IDs.
 - [ ] Review/commit; submit đúng maximum effective walltime và role profiles đã khóa, không đổi common settings để vượt queue constraints.
 

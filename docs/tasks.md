@@ -72,7 +72,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T04 — UIT inspection and preflight orchestration
 
-**Depends on:** T01; probes additionally their actual providers T02/T05–T08 and T10. **Targets:** `src/geobench/preflight.py`, `configs/uit.json`, `tests/{test_config_artifacts,test_slurm_contract}.py`; persistent `deployment/` evidence.
+**Implementation dependencies:** T01; use local fixture providers while T02/T05–T08/T10 are in progress. **Actual probe dependencies:** shared production providers and verified site/resources. **Targets:** `src/geobench/preflight.py`, `configs/uit.json`, `tests/{test_config_artifacts,test_slurm_contract}.py`; persistent `deployment/` evidence.
 
 - [ ] T04.1 — Implement inspection/probe descriptors with explicit unknown inputs; test invalid QoS/GRES pairs and missing CPU/RAM/root/walltime rejection. Test that profile changes cannot change research settings.
 - [ ] T04.2 — Prepare site/environment/storage inspection and immutable snapshot staging using V01–V06. Record unresolved access separately by role; do not make DINO access a global readiness flag.
@@ -81,7 +81,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T05 — Deterministic E1 and E2 generation
 
-**Depends on:** T01/T02. **Targets:** `src/geobench/augmentation/{__init__,traditional,diffusion}.py`, `tests/{test_traditional,test_diffusion_jobs}.py`.
+**Implementation dependencies:** T01/T02 interfaces or faithful fixtures; no actual dataset/model evidence is required. **Targets:** `src/geobench/augmentation/{__init__,traditional,diffusion}.py`, `tests/{test_traditional,test_diffusion_jobs}.py`.
 
 - [ ] T05.1 — Test confirmed E1 transform selection/order/numerics and D02 shuffle-cycle selection; assert paired sources, VAE seeds and latent noise across strengths.
 - [ ] T05.2 — Test D09 first-valid acceptance: attempts 0/1 fail and 2 passes → no attempt 3/4; five failures block quota completion; infrastructure retries preserve attempt identity/cap; holdout collisions block publication.
@@ -90,7 +90,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T06 — Shared classifier, initialization and resume
 
-**Depends on:** T01–T03. **Targets:** `src/geobench/{classifier,training}.py`, `tests/test_training_resume.py`.
+**Implementation dependencies:** T01–T03 interfaces or faithful fixtures; actual model/runtime locks gate official initialization only. **Targets:** `src/geobench/{classifier,training}.py`, `tests/test_training_resume.py`.
 
 - [ ] T06.1 — Test shared initialization per seed, anchor traversal including last partial batch, exact optimizer-step/scheduler counts, validation RNG isolation and earliest-epoch checkpoint tie-break.
 - [ ] T06.2 — Implement the full Common runtime without condition-specific defaults; use shared metrics, completed-epoch last/best checkpoints and complete model/optimizer/scheduler/RNG/sampler/history state.
@@ -103,7 +103,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T07 — CADS, CCFG and Geo guidance
 
-**Depends on:** T05. **Targets:** `src/geobench/augmentation/guidance.py`, extend `augmentation/diffusion.py`, `tests/test_guidance.py`.
+**Implementation dependencies:** T05 interface or faithful mocked sampler; no actual diffusion model is required. **Targets:** `src/geobench/augmentation/guidance.py`, extend `augmentation/diffusion.py`, `tests/test_guidance.py`.
 
 - [ ] T07.1 — Test E3 Eq. (1)–(11), active-timestep endpoints/N=1, FP32 population statistics across all tokens/features, invalid/zero std rejection and fresh independent condition noise streams.
 - [ ] T07.2 — Test CFG-derived positive distance with CHW sum: baseline 0, raw positive `[1,1]`, CFG 2 gives `d_pos=8`; test adaptive scales, interpolation and exactly one scheduler step per active timestep.
@@ -112,7 +112,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T08 — Reference bank, DINO mining and Mixup
 
-**Depends on:** T02/T05–T07. **Targets:** `src/geobench/augmentation/{mining,mixup}.py`, extend `diffusion.py` and trainer Mixup hook, `tests/test_mining_mixup.py`.
+**Implementation dependencies:** T02/T05–T07 interfaces or faithful fixtures; actual DINO access is a deployment gate. **Targets:** `src/geobench/augmentation/{mining,mixup}.py`, extend `diffusion.py` and trainer Mixup hook, `tests/test_mining_mixup.py`.
 
 - [ ] T08.1 — Implement/test CADS reference quotas/source cycles for every class and reference-only singleton handling. G09 reference collisions with frozen E2 final images retry the reference slot without mutating E2; final A1/A2/A3 collisions retry under D09.
 - [ ] T08.2 — Implement/test frozen official DINO processor/CLS extraction, FP32 normalization/centroids/cosines, zero-norm failure, exact-tie smallest other class ID and immutable cached confusers. Use mocks for implementation tests when real access is unavailable.
@@ -125,7 +125,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T09 — Strength selection, official bindings and pool identities
 
-**Depends on:** T01/T03/T05/T06; A4 binding additionally T08. **Targets:** `src/geobench/{cli,config,artifacts}.py`, `tests/{test_config_artifacts,test_evaluation_reporting}.py`.
+**Implementation dependencies:** T01/T03/T05/T06 contracts and T08 for A4, using fixtures where necessary. **Targets:** `src/geobench/{cli,config,artifacts}.py`, `tests/{test_config_artifacts,test_evaluation_reporting}.py`.
 
 - [ ] T09.1 — Test nine-run completeness, mean Validation Tail Macro-F1 at each run's overall-validation-selected checkpoint and smaller-strength exact tie-break; missing evidence blocks selection.
 - [ ] T09.2 — Implement selected-strength lock and all-three-seed verified official E1E2 bindings. Keep source candidates immutable; reject identity/history/manifest mismatch and support the fresh-three-seed alternative without selective seed reruns.
@@ -134,7 +134,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T10 — Slurm templates, submission and recovery
 
-**Depends on:** T01/T04/T09 for descriptor contracts; site smoke/probe submissions require V01–V03 and their role inputs, while long scientific jobs additionally require V13 and role readiness. **Targets:** `scripts/slurm/{cpu.sbatch,gpu.sbatch,submit.sh}`, `tests/test_slurm_contract.py`, CLI descriptor handling.
+**Implementation dependencies:** T01/T04/T09 descriptor contracts or faithful fixtures. **Actual submissions:** site smoke/probe submissions require V01–V03 and their role inputs; long scientific jobs additionally require V13 and role readiness. **Targets:** `scripts/slurm/{cpu.sbatch,gpu.sbatch,submit.sh}`, `tests/test_slurm_contract.py`, CLI descriptor handling.
 
 - [ ] T10.1 — Implement thin module/env/srun wrappers, frozen array-index manifests, resolved resource arguments, persistent logs and JobID/dependency ledger. Use one task/assigned MIG GPU and one writer per pool; no distributed execution framework.
 - [ ] T10.2 — Test array identity stability, unknown resource rejection, single-writer ownership, lock verification despite `afterok`, incomplete-stage non-success and recovery with replacement JobID relationships. Use `afterany` only for incident collection.
@@ -145,7 +145,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 ### T11 — Evaluation, exports and final reporting
 
-**Depends on:** T02/T03/T06/T09. **Targets:** `src/geobench/{evaluation,reporting}.py`, `tests/test_evaluation_reporting.py`.
+**Implementation dependencies:** T02/T03/T06/T09 interfaces or faithful fixtures; actual trained models are not required for local tests. **Targets:** `src/geobench/{evaluation,reporting}.py`, `tests/test_evaluation_reporting.py`.
 
 - [ ] T11.1 — Test missing/duplicate IDs, wrong labels, nonfinite logits, row-map mismatch, raw `[N,124]` logits and full `124×124` confusion consistency; recompute CSV rankings/metrics from raw outputs.
 - [ ] T11.2 — Implement Evaluation §§2–8 inference, per-run artifacts, coverage verification, atomic evaluation locks, main/ablation aliases, group/per-class tables and reporting without checkpoint reselection.
@@ -159,6 +159,13 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - Documentation aligns implementation, deployment verification and separately approved scientific execution milestones. Existing T01–T11 and V/R/F identifiers and prior test evidence are retained.
 - T04 snapshot verification now supports file symlinks within an explicitly trusted cache root and rejects escaping links. T04 remains incomplete; actual site, storage, snapshot component and GPU evidence remain pending.
 - Automatic approval review rejected the attempted T05 test command by citing the earlier T04-only instruction, despite the subsequent broader implementation request. T05 implementation was not started in this transition.
+
+## Detailed implementation order — local only
+
+1. Complete T04–T06 shared contracts and functional pipelines using synthetic inputs and mocked or locally available models; missing providers may be implemented in parallel through stable interfaces.
+2. Complete T07–T08 against the shared sampler and trainer, testing equations, RNG, references, mining and Mixup with deterministic fixtures.
+3. Complete T09–T11 descriptor binding, recovery/Slurm scripts, evaluation and reporting against fixture artifacts. Run every required script syntax check and the integrated regression suite.
+4. Review and push the complete implementation. Only then start the separately tracked deployment verification stage below; failures trigger fixes, local regressions, a new commit and server retest. Never infer actual verification from fixtures.
 
 ## Deployment and server integration — after implementation
 

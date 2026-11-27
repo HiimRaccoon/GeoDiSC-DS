@@ -380,4 +380,4 @@ Người dùng đã xác nhận cả hai quyết định; không còn pending ev
 
 Chưa có trained models, predictions hoặc metrics để chứng minh acceptance criteria. Khi triển khai cần materialize/verify all locks, actual split supports, evaluator ranking/metric conformance, per-seed artifacts và reuse accounting. Các E3 snapshot/token/runtime requirements còn thiếu tiếp tục theo E3 Spec mục 13.3, không biến thành metrics mới hoặc yêu cầu sửa prompts trong task này.
 
-Tài liệu này chỉ đặc tả evaluation/reporting. Chưa triển khai code, chạy inference hoặc tạo bảng số liệu thực nghiệm.
+Tài liệu này đặc tả evaluation/reporting; xem tasks.md cho trạng thái implementation và bằng chứng inference/report thực tế.
