@@ -1,10 +1,10 @@
 # GeoLocation Geo-DiSC-DS Implementation Checklist
 
-**Status:** P0 fixture implementation is complete. Deployment verification and scientific execution remain unchecked; this document does not authorize server changes or job submission.
+**Status:** Code-first implementation is underway. T01–T11 and local testing are separate from UIT deployment verification (V01–V13) and scientific execution (R/F items). Deployment verification is authorized after implementation; full scientific execution requires separate user approval.
 
 **Sources:** [Master Markdown](GeoLocation_Benchmark__E0_E1E2_E3_Implementation_Ready.md), [Common v1.3](specs/00_common.md), [E0 v1.1](specs/01_E0_original.md), [E1E2 v1.2](specs/02_E1E2_hybrid_baseline.md), [E3 v1.1](specs/03_E3_geodisc_ds.md), [Evaluation v1.1](specs/04_evaluation.md), [Implementation Plan](plan.md). Follow their precedence and confirmed decisions; this checklist adds no research policy.
 
-Task IDs T01–T11 map directly to plan Tasks 1–11. V IDs track outstanding deployment/runtime evidence; R IDs track scientific execution. Dependencies mean verified outputs, not merely successful scheduler exits. Gate IDs group evidence and do not impose a global barrier on independent stages. All paths below are planned targets, not existing implementation claims.
+Task IDs T01–T11 map directly to plan Tasks 1–11. V IDs track outstanding deployment/runtime evidence; R IDs track scientific execution. Implementation dependencies may use verified fixtures or mocks; scientific execution dependencies require actual verified outputs, not merely successful scheduler exits. Gate IDs group evidence and do not impose a global barrier on independent stages. All paths below are planned targets, not existing implementation claims.
 
 ## P0 — Contracts, data and metrics
 
@@ -97,7 +97,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - [ ] T06.3 — Compare uninterrupted and interrupted/resumed fixture state and outputs; reject incompatible identities; replay an interrupted epoch from its last completed boundary. Incomplete resumable work must not return completed-stage success.
 - [ ] T06.4 — Run `pytest tests/test_training_resume.py -q`. **Acceptance:** deterministic resume matches uninterrupted fixtures; official initialization creation waits for verified model/runtime locks and probe-state reset.
 
-- [ ] G-P1 — Close implementation P1 after T04 inspection machinery and T05/T06 tests pass, with initial UIT findings recorded. Final GPU evidence remains role-specific V08–V10; this gate does not require DINO weights.
+- [ ] G-P1 — Close implementation P1 after T04 inspection machinery and T05/T06 local tests pass; actual UIT findings are tracked separately. Final GPU evidence remains role-specific V08–V10; this gate does not require DINO weights.
 
 ## P2 — E3 realization
 
@@ -119,7 +119,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - [ ] T08.3 — Implement/test A4 batch selection, same-class replacement partners, confirmed lambda support, pre-normalization mixing and independent checkpointed RNG. Assert unchanged labels, A3 pool, anchors and optimizer steps.
 - [ ] T08.4 — Run `pytest tests/test_mining_mixup.py -q`; verify NumPy array shapes/row mappings and strict JSONL diagnostics schemas. **Acceptance:** A1 final acceptance requires only reference-bank hashes, not DINO features/access; actual extraction requires V06/V10. Track real output evidence as V12.
 
-- [ ] G-P2 — Close E3 implementation after T07/T08 fixture tests and G08 convention review pass. Record V06/V07/V10–V12 statuses explicitly; unavailable DINO access blocks dependent scientific stages, not this fixture gate or independent work.
+- [ ] G-P2 — Close E3 implementation after T07/T08 fixture tests and G08 convention review pass; actual access and runtime checks are deployment gates. Record V06/V07/V10–V12 statuses explicitly; unavailable DINO access blocks dependent scientific stages, not this fixture gate or independent work.
 
 ## P3 — Binding, Slurm and reporting integration
 
@@ -152,11 +152,15 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - [ ] T11.3 — Test full-precision raw values versus two-decimal percentages, sample std, N/A versus incomplete results, exactly three seeds, no unselected-candidate test and per-run test eligibility without an all-18 barrier.
 - [ ] T11.4 — Run `pytest tests/test_evaluation_reporting.py -q`, then integrated `pytest tests -q`. **Acceptance:** confirmed acceptance checks across all five specs have test/evidence coverage; templates contain no invented results.
 
-- [ ] G-P3 — Close integration after T09–T11 tests/shell checks pass. Freeze reviewed source/config/environment identities before corresponding scientific runs, close relevant V gates with real shared-code probes and create three shared initializations after discarding all probe state. DINO-dependent readiness may remain pending while E0/E1E2/A1 proceed.
+- [ ] G-P3 — Close local implementation integration after T09–T11 tests and shell checks pass. Deployment separately freezes reviewed source/config/environment identities, closes applicable V gates with real shared-code probes, and creates three shared initializations after discarding probe state before corresponding scientific runs.
+
+## Deployment and server integration — after implementation
+
+After T01–T11 and local integration tests pass, commit/push the code, deploy a separate checkout to UIT, inspect actual environment/data/storage/model/Slurm inputs and perform CPU/GPU smoke and small shared-code end-to-end tests through Slurm. Diagnose observed failures, add local regression tests, commit/push and retest on server. Actual V-gates stay unchecked until evidence is saved. Full scientific runs require separate user approval.
 
 ## Outstanding verification register — actual evidence required
 
-Each item remains unchecked until evidence is saved under the new artifact root. These are verification requirements, not permission to revise D01–D10, G01–G10 or EVAL-D01/D02.
+Each item remains unchecked until evidence is saved under the new artifact root. These gates do not block implementation or local mock/fixture tests. These are verification requirements, not permission to revise D01–D10, G01–G10 or EVAL-D01/D02.
 
 - [ ] V01 — **Connection/paths; owner T04; blocks server operations.** Verify UIT VPN, SSH alias `uit` → `<PRIVATE_ACCOUNT>@<PRIVATE_UIT_HOST>:22`, key reference `<PRIVATE_SSH_KEY_PATH>`, login identity `<PRIVATE_LOGIN_HOST>` and `/datastore/<PRIVATE_ACCOUNT>/<PRIVATE_WORKSPACE_OWNER>/`. Keep keys/tokens out of artifacts. Confirm separate code checkout and read-only cleaned dataset at `GeoLocation_DataPreprocessing/data/cleaned_dataset/` beneath that workspace.
 - [ ] V02 — **Storage; owners T01/T04; blocks actual publication.** Confirm new version root (candidate `/datastore/<PRIVATE_ACCOUNT>/<PRIVATE_WORKSPACE_OWNER>/benchmarks/geolocation_geodisc_ds_v1/`), quota/free bytes/inodes, model-cache paths, compute-node visibility and atomic/ownership semantics. Estimate output/checkpoint/diagnostic storage; never overwrite/reuse old experiment artifacts or delete them to make space.

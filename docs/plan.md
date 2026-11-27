@@ -1,6 +1,6 @@
 # GeoLocation Geo-DiSC-DS Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking. Implementation/delegation must be requested separately; the current task only writes specifications and this plan.
+> **Workflow:** Implement T01–T11 in dependency order or interleave independent work; complete local fixture and integration tests before deployment. The user has authorized implementation and later deployment verification. Full scientific execution requires separate approval.
 
 **Goal:** Xây benchmark tái lập được cho E0, E1E2 và E3-A1–A4, chạy trên UIT Slurm và xuất đầy đủ evidence/results theo các specs đã chốt.
 
@@ -10,7 +10,7 @@
 
 **Spec:** [Master Markdown](GeoLocation_Benchmark__E0_E1E2_E3_Implementation_Ready.md), [Common v1.3](specs/00_common.md), [E0 v1.1](specs/01_E0_original.md), [E1E2 v1.2](specs/02_E1E2_hybrid_baseline.md), [E3 v1.1](specs/03_E3_geodisc_ds.md), [Evaluation v1.1](specs/04_evaluation.md).
 
-**Status:** Chỉ lập kế hoạch. Chưa tạo package/scripts/environment, kết nối UIT, chạy tests/preflight, tải weights hoặc thực thi benchmark. `docs/tasks.md` chưa được điền; các checkboxes trong plan là implementation work tương lai.
+**Status:** Code-first implementation is underway; `tasks.md` is the current evidence ledger. Separate milestones are: (1) implementation complete when T01–T11 production code and local tests pass, (2) deployment verified when actual UIT evidence and runtime checks pass, and (3) scientific execution complete after approved official runs, evaluation and reporting locks. A pending UIT check does not block coding or fixture tests.
 
 ## Global Constraints
 
@@ -411,18 +411,18 @@ Mỗi task thực hiện vòng nhỏ: ghi fixture/assertions → thấy failure 
 - [ ] Run lại expected PASS; `pytest tests -q` là regression gate sau integrated change, không chạy lặp vô cớ khi không có thay đổi/failure mới.
 - [ ] Review/commit; chỉ sau actual training/evaluation mới populate numeric results và acceptance evidence, không dùng table template làm kết quả.
 
-## 7. Triển khai theo phases và gate
+## 7. Code-first phases and gates
 
-| Phase | Tasks | Gate để đi tiếp |
+| Phase | Scope | Implementation gate |
 |---|---|---|
-| P0 — Contracts/data/metrics | 1–3 | Relevant fixture tests pass, strict config/locks và evaluator policy cố định |
-| P1 — Runtime/generation/trainer | 4–6 | Initial UIT/env/storage inspection và staging evidence; data/E0/E1/E2 mechanics và trainer/resume fixture conformance. Task 4 final GPU probes chờ real providers đầy đủ |
-| P2 — E3 realization | 7–8 | Eq./RNG/Mixup tests pass; DINOv3 access/processor và prompt/token audit có evidence/status cụ thể |
-| P3 — Binding/execution/reporting | 9–11, đóng Task 4 probes | Integration tests pass, GPU probes dùng actual shared code; source/runtime/initial-state readiness được khóa trước scientific runs tương ứng |
-| P4 — Benchmark execution | Stage graph + mục 5 | Stage locks theo dependencies, đủ official/tuning evidence, không mutate configs |
-| P5 — Final acceptance | Evaluation/reporting | Đủ18 official per-seed outputs, main/ablation aliases đúng, full report/evaluation locks |
+| P0 | T01–T03 | Local contract, data and metric tests |
+| P1 | T04–T06 | Local inspection, generation and training/resume tests |
+| P2 | T07–T08 | Local numerical, mining and Mixup tests with mocks where needed |
+| P3 | T09–T11 | Local bindings, Slurm syntax, reporting and end-to-end integration tests |
+| Deployment | Actual UIT verification after P0–P3 | V01–V13 evidence and server-side shared-code smoke tests; resolve observed defects without changing research settings |
+| P4–P5 | Scientific runs and reporting | Separate user approval, verified stage-specific dependencies, official evaluations and report locks |
 
-Tasks 5–8 có thể dùng dependency fixtures trong local tests trước actual GPU preflight, nhưng không publish scientific artifacts khi verification chưa xong. Nếu phát hiện code change sau runtime freeze, cập nhật source identity có version/trace rõ trước các runs liên quan, không trộn silently vào cùng comparison.
+Tasks can be interleaved when their code interfaces are available. Actual model access, GPU probes and site evidence gate real workloads and publication, not implementation or local fixture tests. Preserve failed, unselected and prior-version evidence; never overwrite frozen artifacts.
 
 ## 8. Checkpoint/resume và artifact management chi tiết
 
@@ -435,8 +435,6 @@ Tasks 5–8 có thể dùng dependency fixtures trong local tests trước actua
 - **Storage:** shared real/E1 pools và A3→A4/official bindings dùng references, không duplicate files để đổi tên condition. Không xóa unselected tuning evidence hoặc rejected ledgers để làm mất provenance. Mọi archival/cleanup riêng phải được yêu cầu rõ, không là side effect của plan.
 - **Completion:** Slurm JobID/exit code giúp vận hành nhưng không thay hash/dependency/coverage verification. Hash mismatch/data conflict/numerical failure phải block đúng stage; không sửa manifest/seed/model cho score tốt hơn.
 
-## 9. Tiêu chí hoàn tất implementation và bàn giao
+## 9. Completion and handoff
 
-Implementation hoàn tất khi từng task có relevant checks pass, all required UIT verification evidence đã ghi, confirmed spec invariants không đổi và benchmark có thể resume từ committed state. Benchmark hoàn tất chỉ khi **actual** đủ18 official runs/evaluations, nine-run strength evidence/reuse accounting và final report locks hợp lệ; code/tests pass không thay thế scientific execution.
-
-Bàn giao gồm source/version/environment snapshots, verified UIT deployment profile/max-walltime evidence, job manifest/ID ledger, persistent artifact root index, all spec acceptance evidence và reports. Các constraints chưa giải quyết phải ghi cụ thể thay vì claim success. Task hiện tại chỉ finalizes Evaluation Spec và viết plan này; không execute các bước trên.
+Implementation completion requires production implementations for T01–T11, the required local unit/integration tests and a pushed source commit. Deployment verification separately requires actual UIT environment, resources, data, model, processor, recovery and shared-code runtime evidence; document external blockers instead of treating mocks as deployment evidence. Scientific execution completion requires separately authorized official runs, all 18 official evaluations, nine search records and verified reports. Maintain the stage-specific scientific gates and preserve all confirmed research settings.

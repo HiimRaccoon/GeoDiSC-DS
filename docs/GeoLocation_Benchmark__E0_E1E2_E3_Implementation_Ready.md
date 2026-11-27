@@ -1,4 +1,7 @@
 # GeoLocation Benchmark Specification
+
+> **Workflow (2026-11-28):** Implementation completion means the production implementation exists and required local unit/integration tests pass, including fixture or mock tests where needed. Deployment verification means actual UIT environment, data, models, resources, recovery and shared-code runtime checks have passed with evidence. Scientific execution completion means the required official runs, evaluations and report locks exist and verify. Pending deployment evidence never blocks writing or locally testing independent implementation; it continues to gate the corresponding real artifact publication, jobs and scientific stages. Full scientific execution requires separate user approval. Confirmed research requirements and acceptance rules are unchanged.
+
 ## E0 vs E1+E2 vs E3 – Our Method: Geo-DiSC-DS
 
 **Project:** CS406 – GeoLocation / GeoGuessr Country Classification\

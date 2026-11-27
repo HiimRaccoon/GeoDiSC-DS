@@ -1,5 +1,8 @@
 # 02 — E1 + E2 Hybrid Augmentation Baseline Specification
 
+> **Workflow (2026-11-28):** Implementation completion means the production implementation exists and required local unit/integration tests pass, including fixture or mock tests where needed. Deployment verification means actual UIT environment, data, models, resources, recovery and shared-code runtime checks have passed with evidence. Scientific execution completion means the required official runs, evaluations and report locks exist and verify. Pending deployment evidence never blocks writing or locally testing independent implementation; it continues to gate the corresponding real artifact publication, jobs and scientific stages. Full scientific execution requires separate user approval. Confirmed research requirements and acceptance rules are unchanged.
+
+
 **Phiên bản:** 1.2\
 **Ngày:** 2026-11-26\
 **Official condition ID:** `E1E2`\
