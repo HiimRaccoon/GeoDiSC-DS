@@ -79,6 +79,14 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - [ ] T04.3 — Implement probes calling the shared production modules, not duplicate workload implementations. Defer actual GPU probe closure to V08–V10 after providers and Slurm scripts exist.
 - [ ] T04.4 — Run relevant configuration/preflight tests. **Acceptance:** every pending input has evidence/status and a scoped gate; no unmeasured resource result is marked passing.
 
+### T05 local progress — implementation incomplete
+
+- E1 transform selection/numerics, exact-hash holdout/duplicate audit and a fixture-tested shared E1 pool path now exist. The pool verifies common/E0 dependencies and real source hashes, keeps a deterministic per-attempt ledger, resumes matching staged prefixes, and publishes `pools/E1/pool_lock.json` after its generation lock.
+- A native-resolution E2 img2img loop is exercised with mock VAE/text/UNet/scheduler providers, including strength-dependent active steps, paired latent noise and untruncated token overflow rejection. E2 production snapshot loading, pool/QC orchestration and real model conformance are not yet implemented or verified.
+- Shared classifier construction from hash-verified weights has a mock fixture. Initialization artifacts, full training, validation and checkpoint/resume remain unimplemented. T05/T06 and G-P1 remain unchecked.
+- Review follow-up: E1 generation records policy/backend identity before candidates and preserves source/config provenance, technical rejection/shortage and locked pool counts. The img2img primitive rejects incompatible scheduler settings and PyTorch modules outside FP32/eval. Tests use mocks and do not establish actual model compatibility. Full local regression: **133 passed**.
+- Next: build and integrate the E2 snapshot/runtime provider and candidate/hybrid pool orchestration, then shared initialization/training/resume. Independent T07–T11 work remains authorized. No UIT runtime checks or scientific jobs have been performed.
+
 ### T05 — Deterministic E1 and E2 generation
 
 **Implementation dependencies:** T01/T02 interfaces or faithful fixtures; no actual dataset/model evidence is required. **Targets:** `src/geobench/augmentation/{__init__,traditional,diffusion}.py`, `tests/{test_traditional,test_diffusion_jobs}.py`.
@@ -158,7 +166,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 - Documentation aligns implementation, deployment verification and separately approved scientific execution milestones. Existing T01–T11 and V/R/F identifiers and prior test evidence are retained.
 - T04 snapshot verification now supports file symlinks within an explicitly trusted cache root and rejects escaping links. T04 remains incomplete; actual site, storage, snapshot component and GPU evidence remain pending.
-- Automatic approval review rejected the attempted T05 test command by citing the earlier T04-only instruction, despite the subsequent broader implementation request. T05 implementation was not started in this transition.
+- Automatic approval review initially rejected a T05 command by citing the earlier T04-only instruction. The user subsequently reaffirmed broader authorization; T05 work is now underway.
 
 ## Detailed implementation order — local only
 

@@ -20,6 +20,8 @@ def main(argv=None):
     preflight = commands.add_parser('preflight')
     preflight.add_argument('--root', required=True, type=Path)
     preflight.add_argument('--profile', type=Path)
+    e1 = commands.add_parser('generate-e1')
+    e1.add_argument('--root', required=True, type=Path)
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
@@ -35,4 +37,7 @@ def main(argv=None):
             raise ValueError('GEOBENCH_OWNER_TOKEN is required')
         profile = None if args.profile is None else json.loads(args.profile.read_text(encoding='utf-8'))
         print(inspect_deployment(args.root, {'profile': profile}, owner_token=token))
+    elif args.command == 'generate-e1':
+        from .augmentation.traditional import generate_e1
+        print(generate_e1(args.root, owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
     return 0
