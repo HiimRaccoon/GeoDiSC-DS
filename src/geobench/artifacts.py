@@ -5,11 +5,44 @@ import json
 import os
 from pathlib import Path
 import secrets
-import shutil
+import io
 from contextlib import contextmanager
 import threading
 
 _leases = threading.local()
+AUTHORITATIVE_LOCK_NAMES = frozenset({
+    'lock.json', 'pool_lock.json', 'checkpoint_lock.json', 'selection_lock.json',
+    'bank_lock.json', 'feature_lock.json', 'mining_lock.json',
+    'evaluation_lock.json', 'report_lock.json',
+})
+
+
+def _complete_stream(path, source):
+    """Complete only a matching prefix of a private, owner-controlled write."""
+    path = Path(path)
+    if path.is_symlink():
+        raise ValueError('temporary path is a symlink')
+    with path.open('r+b' if path.exists() else 'x+b') as target:
+        while True:
+            previous = target.read(1024 * 1024)
+            if not previous:
+                break
+            if source.read(len(previous)) != previous:
+                raise ValueError('temporary content mismatch')
+        remaining = source.read(1024 * 1024)
+        if remaining and os.fstat(target.fileno()).st_nlink != 1:
+            raise ValueError('cannot extend a linked temporary file')
+        while remaining:
+            target.write(remaining)
+            remaining = source.read(1024 * 1024)
+        target.flush()
+        os.fsync(target.fileno())
+
+
+def complete_temporary(path, content):
+    """Caller must hold the writer lease and authenticate its persistent claim."""
+    _complete_stream(path, io.BytesIO(content))
+
 
 
 @contextmanager
@@ -152,9 +185,9 @@ def staging_path(root, token):
 
 def verify_lock(path, boundary=None, _seen=None):
     path = Path(path)
-    if path.is_symlink() or path.resolve().name not in {'lock.json', 'pool_lock.json'} or any(part.startswith('.') for part in path.resolve().parts):
+    if path.is_symlink() or path.resolve().name not in AUTHORITATIVE_LOCK_NAMES or any(part.startswith('.') for part in path.resolve().parts):
         raise ValueError('not an authoritative published lock target')
-    if path.name not in {"lock.json", "pool_lock.json"} or any(part.startswith(".") for part in path.parts):
+    if path.name not in AUTHORITATIVE_LOCK_NAMES or any(part.startswith(".") for part in path.parts):
         raise ValueError("not an authoritative published lock")
     return _validate_lock(path, boundary=boundary, _seen=_seen)
 
@@ -182,7 +215,7 @@ def _validate_lock(path, boundary=None, _seen=None):
             if not isinstance(digest, str) or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
                 raise ValueError('invalid SHA-256 schema')
         for name, digest in data['files'].items():
-            if not isinstance(name, str) or name.startswith('.') or name in {'lock.json', 'pool_lock.json'}:
+            if not isinstance(name, str) or name.startswith('.') or name in AUTHORITATIVE_LOCK_NAMES:
                 raise ValueError('reserved output path')
             if sha256_file(_inside(path.parent, name)) != digest:
                 raise ValueError('artifact hash mismatch')
@@ -222,7 +255,7 @@ def _publish_lock(root, descriptor):
         files = descriptor['files']
         if not isinstance(files, list) or not files or len(set(files)) != len(files):
             raise ValueError('unique outputs required')
-        if any(not isinstance(name, str) or not name or name.split('/')[0].startswith('.') or name == 'lock.json' for name in files):
+        if any(not isinstance(name, str) or not name or name.split('/')[0].startswith('.') or name in AUTHORITATIVE_LOCK_NAMES for name in files):
             raise ValueError('invalid output path')
         staged = {name: _inside(stage, name) for name in files}
         outputs = {name: _inside(root, name) for name in files}
@@ -239,7 +272,7 @@ def _publish_lock(root, descriptor):
         data = {'identity': descriptor['identity'], 'files': hashes, 'dependencies': deps,
                 'artifact_root': os.path.relpath(artifact_root, root).replace(os.sep, '/')}
         lock_name = descriptor.get('lock_name', 'lock.json')
-        if lock_name not in {'lock.json', 'pool_lock.json'}:
+        if lock_name not in AUTHORITATIVE_LOCK_NAMES:
             raise ValueError('invalid published lock name')
         if (root / lock_name).exists():
             if verify_lock(root / lock_name, boundary=artifact_root) != data:
@@ -254,11 +287,8 @@ def _publish_lock(root, descriptor):
                     raise ValueError('existing output mismatch')
                 continue
             copy = copies / hashlib.sha256(name.encode('utf-8')).hexdigest()
-            if not copy.exists():
-                with staged[name].open('rb') as source, copy.open('xb') as target:
-                    shutil.copyfileobj(source, target)
-                    target.flush()
-                    os.fsync(target.fileno())
+            with staged[name].open('rb') as source:
+                _complete_stream(copy, source)
             if sha256_file(copy) != hashes[name]:
                 raise ValueError('staged copy mismatch')
             os.link(copy, outputs[name])
@@ -268,14 +298,7 @@ def _publish_lock(root, descriptor):
                 raise ValueError('output changed during publication')
         temp = root / '.lock.staging'
         encoded = json.dumps(data, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
-        if temp.exists():
-            if temp.read_text(encoding='utf-8') != encoded:
-                raise ValueError('staged lock mismatch')
-        else:
-            with temp.open('x', encoding='utf-8', newline='\n') as out:
-                out.write(encoded)
-                out.flush()
-                os.fsync(out.fileno())
+        complete_temporary(temp, encoded.encode('utf-8'))
         _validate_lock(temp, boundary=artifact_root)
         os.link(temp, root / lock_name)
         temp.unlink()

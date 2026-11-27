@@ -132,6 +132,26 @@ def inventory_fingerprint(rows, mapping):
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _private_site(root):
+    """Read separately verified private deployment inputs; no public site defaults."""
+    import json
+    from .artifacts import verify_lock
+    directory = Path(root).resolve() / 'deployment/private_site'
+    path = directory / 'lock.json'
+    lock = verify_lock(path, boundary=root)
+    if lock['identity'] != 'private-site' or 'site.json' not in lock['files']:
+        raise ValueError('private deployment input lock mismatch')
+    site = json.loads((directory/'site.json').read_text(encoding='utf-8'))
+    if not isinstance(site, dict) or set(site) != {'status','ssh_target','login_host','workspace','evidence_files'}:
+        raise ValueError('invalid private deployment schema')
+    if site['status'] != 'verified' or any(not isinstance(site[name], str) or not site[name] for name in ('ssh_target','login_host','workspace')):
+        raise ValueError('private deployment inputs are not verified')
+    evidence = site['evidence_files']
+    if not isinstance(evidence, list) or not evidence or any(not isinstance(name,str) or name == 'site.json' or name not in lock['files'] for name in evidence):
+        raise ValueError('missing locked private deployment evidence')
+    return site, path
+
+
 def _verify_publication_readiness(root, fingerprint, dataset_root, *, _pending=None):
     """Check locked V01/V02/V04 records under deployment/data_readiness.
 
@@ -146,7 +166,7 @@ def _verify_publication_readiness(root, fingerprint, dataset_root, *, _pending=N
     lock_path = evidence / 'lock.json'
     try:
         if _pending is None:
-            lock = verify_lock(lock_path)
+            lock = verify_lock(lock_path, boundary=root)
         else:
             evidence, lock = _pending
         if lock['identity'] != 'data-readiness' or not {'V01.json', 'V02.json', 'V04.json'} <= lock['files'].keys():
@@ -163,10 +183,11 @@ def _verify_publication_readiness(root, fingerprint, dataset_root, *, _pending=N
                 raise ValueError(f'{name} has no locked supporting evidence')
         if records['V01'].get('dataset_root') != str(Path(dataset_root).resolve()):
             raise ValueError('V01 dataset identity mismatch')
-        if (records['V01'].get('ssh_target') != 'binhvp@10.204.2.109:22'
-                or records['V01'].get('login_host') != 'login01.cm.cluster'
-                or records['V01'].get('workspace') != '/datastore/binhvp/BuiTrongTan/'):
+        site, site_lock = _private_site(root)
+        if any(records['V01'].get(name) != site[name] for name in ('ssh_target','login_host','workspace')):
             raise ValueError('V01 site identity mismatch')
+        if lock.get('dependencies', {}).get('deployment/private_site/lock.json') != sha256_file(site_lock):
+            raise ValueError('readiness private deployment dependency mismatch')
         if records['V02'].get('artifact_root') != str(Path(root).resolve()):
             raise ValueError('V02 artifact root mismatch')
         storage = records['V02']
@@ -198,17 +219,8 @@ def prepare_data(dataset_root, root, *, owner_token=None, configuration=None):
     dataset_root, root = Path(dataset_root).resolve(), Path(root).resolve()
     if root == dataset_root or root.is_relative_to(dataset_root) or dataset_root.is_relative_to(root):
         raise ValueError('dataset and artifact roots must be separate')
-    from .config import verified_configuration
-    configuration = verified_configuration() if configuration is None else configuration
-    # Revalidate supplied snapshots; callers cannot bypass the CLI checks.
-    expected = verified_configuration()
-    if configuration['values']['benchmark'] != expected['values']['benchmark'] or configuration['values']['methods'] != expected['values']['methods']:
-        raise ValueError('research config mismatch')
-    import hashlib, json
-    actual = {name: hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
-              for name, value in configuration['values'].items()}
-    if actual != configuration['sha256']:
-        raise ValueError('configuration hash mismatch')
+    from .config import verified_configuration, validate_configuration
+    configuration = verified_configuration() if configuration is None else validate_configuration(configuration)
     with active_writer(root):
         return _prepare_data(dataset_root, root, owner_token=owner_token, configuration=configuration)
 
@@ -220,7 +232,7 @@ def _prepare_data(dataset_root, root, *, owner_token=None, configuration=None):
     import json
     import secrets
     from . import artifacts, config, images
-    from .artifacts import claim_writer, publish_lock, staging_path
+    from .artifacts import claim_writer, publish_lock, staging_path, complete_temporary
 
     dataset_root, root = Path(dataset_root).resolve(), Path(root).resolve()
     if root == dataset_root or root.is_relative_to(dataset_root) or dataset_root.is_relative_to(root):
@@ -261,12 +273,7 @@ def _prepare_data(dataset_root, root, *, owner_token=None, configuration=None):
     def write_exact(name, content):
         path = stage / name
         encoded = content.encode('utf-8')
-        if path.exists():
-            if path.read_bytes() != encoded:
-                raise ValueError('existing staged output mismatch')
-        else:
-            with path.open('xb') as stream:
-                stream.write(encoded)
+        complete_temporary(path, encoded)
     def write_json(name, obj):
         write_exact(name, json.dumps(obj, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n')
     def write_csv(name, records, fields):
@@ -317,12 +324,7 @@ def _prepare_data(dataset_root, root, *, owner_token=None, configuration=None):
     e0_stage = staging_path(e0, e0_token)
     e0_content = (json.dumps(descriptor, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8')
     e0_descriptor = e0_stage / 'pool.json'
-    if e0_descriptor.exists():
-        if e0_descriptor.read_bytes() != e0_content:
-            raise ValueError('existing E0 descriptor mismatch')
-    else:
-        with e0_descriptor.open('xb') as stream:
-            stream.write(e0_content)
+    complete_temporary(e0_descriptor, e0_content)
     publish_lock(e0, {'identity': 'e0:' + fingerprint, 'files': ['pool.json'], 'lock_name': 'pool_lock.json',
                       'dependencies': {'splits/lock.json': sha256_file(data_lock)}, 'artifact_root': root, 'claim': e0_token})
     return data_lock
@@ -335,7 +337,7 @@ def publish_readiness(dataset_root, root, records, evidence_files, *, owner_toke
     observations. Production records must contain actual site/audit evidence.
     """
     import json, tempfile
-    from .artifacts import active_writer, claim_writer, staging_path, publish_lock, _inside
+    from .artifacts import active_writer, claim_writer, staging_path, publish_lock, _inside, complete_temporary
     if not isinstance(owner_token, str) or not owner_token:
         raise ValueError('a privately retained owner_token is required')
     root, dataset_root = Path(root).resolve(), Path(dataset_root).resolve()
@@ -360,8 +362,10 @@ def publish_readiness(dataset_root, root, records, evidence_files, *, owner_toke
             filename = name + '.json'
             (pending / filename).write_text(json.dumps(record, sort_keys=True, allow_nan=False), encoding='utf-8')
             files.append(filename)
+        _, site_lock = _private_site(root)
+        dependencies = {'deployment/private_site/lock.json': sha256_file(site_lock)}
         _verify_publication_readiness(root, fingerprint, dataset_root,
-                                      _pending=(pending, {'identity':'data-readiness','files':dict.fromkeys(files)}))
+                                      _pending=(pending, {'identity':'data-readiness','files':dict.fromkeys(files), 'dependencies':dependencies}))
         destination = root / 'deployment/data_readiness'
         with active_writer(root):
             token = claim_writer(destination, 'data-readiness', token=owner_token,
@@ -370,12 +374,8 @@ def publish_readiness(dataset_root, root, records, evidence_files, *, owner_toke
                 stage = staging_path(destination, token)
                 for name in files:
                     path = _inside(stage, name); content = (pending/name).read_bytes()
-                    if path.exists():
-                        if path.read_bytes() != content:
-                            raise ValueError('staged readiness evidence mismatch')
-                    else:
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        with path.open('xb') as stream: stream.write(content)
-                return publish_lock(destination, {'identity':'data-readiness','files':files,'dependencies':{},'claim':token})
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    complete_temporary(path, content)
+                return publish_lock(destination, {'identity':'data-readiness','files':files,'dependencies':dependencies,'claim':token,'artifact_root':root})
             finally:
                 token.close()

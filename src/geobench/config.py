@@ -101,21 +101,46 @@ def load_config(path: Path) -> dict:
     with Path(path).open(encoding='utf-8-sig') as stream:
         config = json.load(stream, object_pairs_hook=_unique_pairs,
                            parse_constant=lambda value: (_ for _ in ()).throw(ValueError('non-finite JSON')))
+    return validate_config(config)
+
+
+def validate_config(config, role=None):
     if not isinstance(config, dict):
         raise ValueError('config must be an object')
-    if 'classifier' in config:
-        expected = RESEARCH
-    elif 'diffusion' in config or 'variants' in config:
-        expected = METHODS
-    elif set(config) == DEPLOYMENT_KEYS:
-        if any(value is not None and (isinstance(value, bool) or not isinstance(value, (str, int))) for value in config.values()):
-            raise ValueError('invalid deployment value')
-        return config
+    if role is None:
+        role = 'benchmark' if 'classifier' in config else 'methods' if ('diffusion' in config or 'variants' in config) else 'deployment'
+    if role == 'deployment':
+        if set(config) != DEPLOYMENT_KEYS:
+            raise ValueError('invalid deployment schema')
+        for name, value in config.items():
+            if value is None:
+                continue
+            if name == 'cpu_count':
+                if type(value) is not int or value <= 0:
+                    raise ValueError('invalid deployment CPU count')
+            elif not isinstance(value, str) or not value:
+                raise ValueError('invalid deployment value')
     else:
-        raise ValueError('unknown configuration schema')
-    if json.dumps(config, sort_keys=True, allow_nan=False) != json.dumps(expected, sort_keys=True, allow_nan=False):
-        raise ValueError('research config differs from confirmed settings')
+        expected = {'benchmark': RESEARCH, 'methods': METHODS}.get(role)
+        if expected is None or json.dumps(config, sort_keys=True, allow_nan=False) != json.dumps(expected, sort_keys=True, allow_nan=False):
+            raise ValueError('research config differs from confirmed settings')
     return config
+
+
+def validate_configuration(snapshot):
+    import hashlib
+    roles = {'benchmark','methods','deployment'}
+    if not isinstance(snapshot, dict) or set(snapshot) != {'values','sha256'}:
+        raise ValueError('invalid configuration snapshot schema')
+    if (not isinstance(snapshot['values'], dict) or set(snapshot['values']) != roles
+            or not isinstance(snapshot['sha256'], dict) or set(snapshot['sha256']) != roles):
+        raise ValueError('configuration role mismatch')
+    for role, value in snapshot['values'].items():
+        validate_config(value, role)
+        digest = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+        if snapshot['sha256'][role] != digest:
+            raise ValueError('configuration hash mismatch')
+    return json.loads(json.dumps(snapshot, allow_nan=False))
 
 
 def verified_configuration(benchmark=None, methods=None, deployment=None):
@@ -124,11 +149,9 @@ def verified_configuration(benchmark=None, methods=None, deployment=None):
     paths = {'benchmark': benchmark or base / 'benchmark.json',
              'methods': methods or base / 'methods.json', 'deployment': deployment or base / 'uit.json'}
     values = {name: load_config(path) for name, path in paths.items()}
-    if values['benchmark'] != RESEARCH or values['methods'] != METHODS or set(values['deployment']) != DEPLOYMENT_KEYS:
-        raise ValueError('configuration role mismatch')
     hashes = {name: hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
               for name, value in values.items()}
-    return {'values': values, 'sha256': hashes}
+    return validate_configuration({'values': values, 'sha256': hashes})
 
 
 def resolve_run(root: Path, run_id: str) -> dict:

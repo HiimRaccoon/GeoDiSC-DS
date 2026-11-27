@@ -101,13 +101,15 @@ def test_readiness_requires_verified_evidence_for_same_dataset(tmp_path, monkeyp
         record['evidence_files'] = [name + '-evidence.txt']
         (stage / (name + '-evidence.txt')).write_text('fixture evidence')
         if name == 'V01':
-            record.update(ssh_target='binhvp@10.204.2.109:22', login_host='login01.cm.cluster', workspace='/datastore/binhvp/BuiTrongTan/')
+            record.update(ssh_target='user@fixture.invalid:22', login_host='login.fixture.invalid', workspace='/fixture/workspace/')
         if name == 'V02':
             record.update(free_bytes=1000, free_inodes=100, required_bytes=500, required_inodes=50, model_cache_paths=['/fixture/cache'], quota_ok=True, compute_visible=True, atomic_publication=True, single_writer=True)
         if name == 'V04':
             record['checks'] = dict.fromkeys(['readable', 'file_hashes', 'pixel_hashes', 'duplicate_labels', 'quotas', 'leakage'], True)
         (stage / (name + '.json')).write_text(json.dumps(record))
-    publish_lock(evidence, {'identity': 'data-readiness', 'files': [name + suffix for name in records for suffix in ('.json', '-evidence.txt')], 'dependencies': {}, 'claim': token})
+    from site_evidence import publish_site
+    site_lock = publish_site(root)
+    publish_lock(evidence, {'identity': 'data-readiness', 'files': [name + suffix for name in records for suffix in ('.json', '-evidence.txt')], 'dependencies': {'deployment/private_site/lock.json': sha256_file(site_lock)}, 'artifact_root':root, 'claim': token})
     assert data._verify_publication_readiness(root, 'f'*64, dataset)
     with pytest.raises(ValueError):
         data._verify_publication_readiness(root, 'e'*64, dataset)

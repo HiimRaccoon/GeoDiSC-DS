@@ -71,7 +71,7 @@ def test_fixture_data_publication_has_locked_manifests(tmp_path, monkeypatch):
     import geobench.data as data
     import geobench.artifacts as artifacts
     import json
-    from geobench.artifacts import claim_writer, staging_path, publish_lock, verify_lock
+    from geobench.artifacts import claim_writer, staging_path, publish_lock, verify_lock, sha256_file
     dataset = tmp_path / 'dataset'
     make_images(dataset, {'a': [1, 2, 3], 'b': [4]})
     monkeypatch.setattr(data, 'EXPECTED_CLASSES', 2)
@@ -90,13 +90,15 @@ def test_fixture_data_publication_has_locked_manifests(tmp_path, monkeypatch):
         record['evidence_files'] = [name + '-evidence.txt']
         (stage / (name + '-evidence.txt')).write_text('fixture evidence')
         if name == 'V01':
-            record.update(ssh_target='binhvp@10.204.2.109:22', login_host='login01.cm.cluster', workspace='/datastore/binhvp/BuiTrongTan/')
+            record.update(ssh_target='user@fixture.invalid:22', login_host='login.fixture.invalid', workspace='/fixture/workspace/')
         if name == 'V02':
             record.update(free_bytes=1000, free_inodes=100, required_bytes=500, required_inodes=50, model_cache_paths=['/fixture/cache'], quota_ok=True, compute_visible=True, atomic_publication=True, single_writer=True)
         if name == 'V04':
             record['checks'] = dict.fromkeys(['readable', 'file_hashes', 'pixel_hashes', 'duplicate_labels', 'quotas', 'leakage'], True)
         (stage / (name + '.json')).write_text(json.dumps(record))
-    publish_lock(evidence, {'identity': 'data-readiness', 'files': [name + suffix for name in records for suffix in ('.json', '-evidence.txt')], 'dependencies': {}, 'claim': token})
+    from site_evidence import publish_site
+    site_lock = publish_site(root)
+    publish_lock(evidence, {'identity': 'data-readiness', 'files': [name + suffix for name in records for suffix in ('.json', '-evidence.txt')], 'dependencies': {'deployment/private_site/lock.json': sha256_file(site_lock)}, 'artifact_root':root, 'claim': token})
     original_publish = artifacts.publish_lock
     def interrupt_e0(path, descriptor):
         if descriptor['identity'].startswith('e0:'):
@@ -106,6 +108,11 @@ def test_fixture_data_publication_has_locked_manifests(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='injected interruption'):
         data.prepare_data(dataset, root, owner_token='fixture-owner')
     monkeypatch.setattr(artifacts, 'publish_lock', original_publish)
+    frozen_data_lock = (root/'splits/lock.json').read_bytes()
+    for partial in (root/'splits/.staging/train.csv', root/'pools/E0/.staging/pool.json'):
+        complete = partial.read_bytes()
+        partial.write_bytes(complete[:10])
+
     with pytest.raises(ValueError):
         data.prepare_data(dataset, root, owner_token='wrong-owner')
     lock = data.prepare_data(dataset, root, owner_token='fixture-owner')
@@ -121,8 +128,9 @@ def test_fixture_data_publication_has_locked_manifests(tmp_path, monkeypatch):
     second_root = tmp_path/'second-artifacts'
     records['V02']['artifact_root'] = str(second_root.resolve())
     evidence_files = {name+'-evidence.txt': b'fixture evidence' for name in records}
+    publish_site(second_root)
     produced = data.publish_readiness(dataset, second_root, records, evidence_files, owner_token='readiness-owner')
-    assert verify_lock(produced)['identity'] == 'data-readiness'
+    assert verify_lock(produced, boundary=second_root)['identity'] == 'data-readiness'
     assert data.publish_readiness(dataset, second_root, records, evidence_files, owner_token='readiness-owner') == produced
     invalid_root = tmp_path/'invalid-readiness'
     records['V02']['artifact_root'] = str(invalid_root.resolve())
@@ -133,6 +141,7 @@ def test_fixture_data_publication_has_locked_manifests(tmp_path, monkeypatch):
     records['V01']['status'] = 'verified'
 
     assert data._verify_publication_readiness(second_root, data.inventory_fingerprint(rows,mapping), dataset)
+    assert (root/'splits/lock.json').read_bytes() == frozen_data_lock
     info = verify_lock(lock, boundary=root)
     assert {'train.csv', 'val.csv', 'test.csv', 'class_groups.csv', 'split_metadata.json'} <= set(info['files'])
     metadata = json.loads((root / 'splits/split_metadata.json').read_text(encoding='utf-8'))

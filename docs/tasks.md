@@ -47,6 +47,15 @@ Task IDs T01–T11 map directly to plan Tasks 1–11. V IDs track outstanding de
 
 Evidence: full regression suite **72 passed** on 2026-11-27. Metrics/research configuration values are unchanged. Actual UIT V01/V02/V04 evidence remains outstanding; no P1 work or Slurm submission was performed.
 
+## Final targeted P0 fixes — F06–F09
+
+- [x] F06 — Authenticated recovery completes matching prefixes of interrupted staged files, publication copies and temporary locks. Unexpected temporary content and mismatched published artifacts remain unchanged and block publication.
+- [x] F07 — File-based CLI inputs and programmatic snapshots share the same strict role/schema/type/research-value validation and canonical configuration-hash checks.
+- [x] F08 — Public source and fixtures contain no fixed private UIT host, login or workspace identifiers. Readiness binds a separately verified private-site profile and its supporting evidence by lock dependency.
+- [x] F09 — The shared artifact contract publishes and verifies all authoritative lock names required by the confirmed specifications; each is covered by a dependency-consumption regression.
+
+Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and interrupted data/E0 staging recovery. Research configuration files, metrics and working research behavior are unchanged. Actual UIT verification remains outstanding. No P1 implementation, Slurm jobs or history rewrite.
+
 ## P1 — Runtime, generation and shared training
 
 ### T04 — UIT inspection and preflight orchestration
