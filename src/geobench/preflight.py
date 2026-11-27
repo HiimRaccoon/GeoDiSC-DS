@@ -32,11 +32,14 @@ def readiness_by_role(evidence):
             'dino': common and evidence['dino']}
 
 
-def verify_snapshot(snapshot, descriptor):
+def verify_snapshot(snapshot, descriptor, *, cache_root=None):
     """Verify a materialized snapshot without downloading or selecting revisions."""
     from pathlib import Path
-    from .artifacts import sha256_file, _inside
+    from .artifacts import sha256_file
     root = Path(snapshot).resolve()
+    cache = Path(cache_root).resolve() if cache_root is not None else root
+    if not root.is_relative_to(cache):
+        raise ValueError('snapshot is outside the trusted cache')
     if not isinstance(descriptor, dict) or set(descriptor) != {'repository', 'revision', 'files'}:
         raise ValueError('invalid snapshot descriptor')
     if not isinstance(descriptor['repository'], str) or not descriptor['repository'] or not re.fullmatch(r'[0-9a-f]{40}', descriptor['revision']):
@@ -46,13 +49,18 @@ def verify_snapshot(snapshot, descriptor):
     if not root.is_dir():
         raise ValueError('snapshot directory missing')
     paths = list(root.rglob('*'))
-    if any(path.is_symlink() for path in paths):
-        raise ValueError('snapshot symlinks require separate materialization')
+    if any(path.is_symlink() and (path.is_dir() or not path.resolve().is_relative_to(cache)) for path in paths):
+        raise ValueError('snapshot symlink escapes the trusted cache or points to a directory')
     if {path.relative_to(root).as_posix() for path in paths if path.is_file()} != set(descriptor['files']):
         raise ValueError('snapshot inventory mismatch')
     for name, expected in descriptor['files'].items():
         try:
-            if sha256_file(_inside(root, name)) != expected:
+            if (not isinstance(name, str) or not name or '\\' in name
+                    or any(part in {'', '.', '..'} for part in name.split('/'))
+                    or Path(name).is_absolute()):
+                raise ValueError('invalid snapshot path')
+            target = (root / name).resolve(strict=True)
+            if not target.is_relative_to(cache) or sha256_file(target) != expected:
                 raise ValueError('snapshot file hash mismatch')
         except OSError as exc:
             raise ValueError('snapshot file unavailable') from exc
@@ -148,13 +156,13 @@ def inspect_storage(path):
             'quota': 'pending', 'compute_visibility': 'pending', 'atomic_semantics': 'pending'}
 
 
-def verify_model_snapshot(snapshot, role, descriptor):
+def verify_model_snapshot(snapshot, role, descriptor, *, cache_root=None):
     if role not in {'classifier', 'diffusion', 'dino'}:
         raise ValueError('unknown model role')
     if role == 'dino' and (descriptor.get('repository') != 'facebook/dinov3-vitb16-pretrain-lvd1689m'
                            or descriptor.get('revision') != '5931719e67bbdb9737e363e781fb0c67687896bc'):
         raise ValueError('DINO snapshot does not match the confirmed model and revision')
-    return verify_snapshot(snapshot, descriptor)
+    return verify_snapshot(snapshot, descriptor, cache_root=cache_root)
 
 
 ROLE_REQUIREMENTS = {

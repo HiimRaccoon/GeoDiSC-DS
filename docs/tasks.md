@@ -68,7 +68,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 - Added the `preflight` CLI and immutable pending inspection report, local interpreter/package and storage observation helpers, pinned snapshot hash/inventory checks, role-scoped evidence integrity checks, prompt-overflow audit, and Slurm-only shared-provider dispatch. Generic locked evidence is recorded as present, not automatically verified; roles remain blocked pending role-specific conformance.
 - Fixture tests: `tests/test_preflight.py` **17 passed**; full regression suite **110 passed**. Real login/Conda inspection on 2026-11-27 observed Python 3.11.18 and installed package metadata. No compute-node, model-snapshot, tokenizer, quota or GPU evidence has been verified.
-- **Still required:** actual site/storage/environment orchestration and evidence creation, full snapshot component/processor verification and immutable staging, role-specific conformance validators and readiness transitions, complete production GPU probe contracts, and end-to-end P0 readiness integration. T04 and all V-gates remain unchecked. The current snapshot checker rejects symlinks, including ordinary linked model caches, until safe cache support is implemented.
+- **Still required:** actual site/storage/environment orchestration and evidence creation, full snapshot component/processor verification and immutable staging, role-specific conformance validators and readiness transitions, complete production GPU probe contracts, and end-to-end P0 readiness integration. T04 and all V-gates remain unchecked. Snapshot fixture checks now accept file symlinks only within an explicitly trusted cache root; actual cached model contents still require verification.
 
 ### T04 — UIT inspection and preflight orchestration
 
@@ -153,6 +153,12 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - [ ] T11.4 — Run `pytest tests/test_evaluation_reporting.py -q`, then integrated `pytest tests -q`. **Acceptance:** confirmed acceptance checks across all five specs have test/evidence coverage; templates contain no invented results.
 
 - [ ] G-P3 — Close local implementation integration after T09–T11 tests and shell checks pass. Deployment separately freezes reviewed source/config/environment identities, closes applicable V gates with real shared-code probes, and creates three shared initializations after discarding probe state before corresponding scientific runs.
+
+## Code-first transition evidence — 2026-11-28
+
+- Documentation aligns implementation, deployment verification and separately approved scientific execution milestones. Existing T01–T11 and V/R/F identifiers and prior test evidence are retained.
+- T04 snapshot verification now supports file symlinks within an explicitly trusted cache root and rejects escaping links. T04 remains incomplete; actual site, storage, snapshot component and GPU evidence remain pending.
+- Automatic approval review rejected the attempted T05 test command by citing the earlier T04-only instruction, despite the subsequent broader implementation request. T05 implementation was not started in this transition.
 
 ## Deployment and server integration — after implementation
 

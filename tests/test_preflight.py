@@ -136,3 +136,15 @@ def test_prompt_audit_detects_overflow_without_changing_text():
     result=audit_prompts(Tokenizer(), {'base':['normal'], 'geo':['long prompt']})
     assert result['overflow_roles']==['geo']
     assert result['records'][1]['text']=='long prompt'
+
+
+def test_snapshot_accepts_only_symlinks_inside_explicit_cache(tmp_path):
+    from geobench.preflight import verify_snapshot
+    import hashlib
+    cache=tmp_path/'cache'; cache.mkdir(); blobs=cache/'blobs'; blobs.mkdir(); snap=cache/'snapshots'/'a'; snap.mkdir(parents=True)
+    (blobs/'data').write_bytes(b'weights')
+    try: (snap/'weights').symlink_to(blobs/'data')
+    except OSError: pytest.skip('symlink creation unavailable')
+    desc={'repository':'example/model','revision':'a'*40,'files':{'weights':hashlib.sha256(b'weights').hexdigest()}}
+    assert verify_snapshot(snap,desc,cache_root=cache)['files']==desc['files']
+    with pytest.raises(ValueError): verify_snapshot(snap,desc,cache_root=snap)
