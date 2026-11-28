@@ -52,6 +52,7 @@ def test_e1_pool_reuses_verified_real_training_sources(tmp_path):
     from PIL import Image
     from geobench.artifacts import claim_writer, staging_path, publish_lock, sha256_file, verify_lock
     from geobench.images import decoded_pixel_sha256
+    from geobench.config import verified_configuration
     from geobench.augmentation.traditional import generate_e1
     dataset=tmp_path/'dataset'; dataset.mkdir()
     Image.new('RGB',(12,8),(100,120,140)).save(dataset/'a.png')
@@ -65,7 +66,8 @@ def test_e1_pool_reuses_verified_real_training_sources(tmp_path):
             if name=='train': writer.writerow(row)
     with (stage/'class_groups.csv').open('w',newline='') as stream:
         writer=csv.DictWriter(stream,fieldnames=['class_id','class_name','n_original','n_train','singleton','group']);writer.writeheader();writer.writerow({'class_id':0,'class_name':'a','n_original':20,'n_train':20,'singleton':'false','group':'medium'})
-    data_lock=publish_lock(split,{'identity':'common-data:fixture','files':['train.csv','val.csv','test.csv','class_groups.csv'],'dependencies':{},'claim':token})
+    (stage/'configuration.json').write_text(json.dumps(verified_configuration()))
+    data_lock=publish_lock(split,{'identity':'common-data:fixture','files':['train.csv','val.csv','test.csv','class_groups.csv','configuration.json'],'dependencies':{},'claim':token})
     e0=root/'pools/E0'; token=claim_writer(e0,'e0:fixture'); stage=staging_path(e0,token)
     (stage/'pool.json').write_text(json.dumps({'manifest_sha256':sha256_file(split/'train.csv')}))
     e0_lock=publish_lock(e0,{'identity':'e0:fixture','files':['pool.json'],'dependencies':{'splits/lock.json':sha256_file(data_lock)},'artifact_root':root,'claim':token,'lock_name':'pool_lock.json'})
@@ -78,6 +80,7 @@ def test_e1_publishes_exact_quota_with_locked_real_membership(tmp_path, monkeypa
     from PIL import Image
     from geobench.artifacts import claim_writer, staging_path, publish_lock, sha256_file, verify_lock
     from geobench.images import decoded_pixel_sha256
+    from geobench.config import verified_configuration
     from geobench.augmentation.traditional import generate_e1
     import geobench.augmentation.quality as quality
     original_validate = quality.validate_candidate_tensor
@@ -99,7 +102,8 @@ def test_e1_publishes_exact_quota_with_locked_real_membership(tmp_path, monkeypa
             if name=='train': writer.writerows(rows)
     with (stage/'class_groups.csv').open('w',newline='') as stream:
         writer=csv.DictWriter(stream,fieldnames=['class_id','class_name','n_original','n_train','singleton','group']);writer.writeheader();writer.writerow({'class_id':0,'class_name':'a','n_original':120,'n_train':99,'singleton':'false','group':'medium'})
-    data_lock=publish_lock(split,{'identity':'common-data:fixture','files':['train.csv','val.csv','test.csv','class_groups.csv'],'dependencies':{},'claim':token})
+    (stage/'configuration.json').write_text(json.dumps(verified_configuration()))
+    data_lock=publish_lock(split,{'identity':'common-data:fixture','files':['train.csv','val.csv','test.csv','class_groups.csv','configuration.json'],'dependencies':{},'claim':token})
     e0=root/'pools/E0'; token=claim_writer(e0,'e0:fixture'); stage=staging_path(e0,token)
     (stage/'pool.json').write_text(json.dumps({'manifest_sha256':sha256_file(split/'train.csv')}))
     publish_lock(e0,{'identity':'e0:fixture','files':['pool.json'],'dependencies':{'splits/lock.json':sha256_file(data_lock)},'artifact_root':root,'claim':token,'lock_name':'pool_lock.json'})
@@ -115,6 +119,9 @@ def test_e1_publishes_exact_quota_with_locked_real_membership(tmp_path, monkeypa
     calls[0] = 0
     assert generate_e1(root,dataset_root=dataset,owner_token='fixture')==lock
     assert ledger.read_bytes()==complete
+    previous_calls = calls[0]
+    assert generate_e1(root,dataset_root=dataset,owner_token='fixture')==lock
+    assert calls[0] == previous_calls
 
 
 def test_nonfinite_candidate_is_a_technical_rejection():

@@ -81,3 +81,30 @@ def test_sampler_rejects_train_mode_module():
     assert model.training
     with pytest.raises(ValueError,match='FP32 eval'):
         generate_image(Image.new('RGB',(15,15)), 'Example', .25, vae=model,unet=UNet(),tokenizer=Tokenizer(),text_encoder=Text(),scheduler=Scheduler(),device='cpu',vae_seed=1,latent_seed=2)
+
+
+def test_guided_loop_steps_scheduler_once_per_active_timestep():
+    class VariedText:
+        def __call__(self, ids): return (torch.arange(154,dtype=torch.float32).reshape(1,77,2),)
+    scheduler=Scheduler()
+    output,meta=generate_image(Image.new('RGB',(15,15)), 'Example', .25, vae=VAE(),unet=UNet(),tokenizer=Tokenizer(),text_encoder=VariedText(),scheduler=scheduler,device='cpu',vae_seed=1,latent_seed=2,
+                               variant='A2',confuser_country='Other',role='final',class_id=1,slot=0,attempt=0)
+    assert output.shape==(3,15,15)
+    assert scheduler.calls==meta['active_steps']==len(meta['guidance'])==12
+    assert meta['guidance'][0]['positive_noise_seed'] != meta['guidance'][0]['confuser_noise_seed']
+
+
+def test_sampler_rejects_autocast():
+    with torch.autocast(device_type='cpu'):
+        with pytest.raises(ValueError, match='autocast'):
+            generate_image(Image.new('RGB',(15,15)),'Example',.25,vae=VAE(),unet=UNet(),tokenizer=Tokenizer(),text_encoder=Text(),scheduler=Scheduler(),device='cpu',vae_seed=1,latent_seed=2)
+
+
+def test_e2_policy_records_all_shared_generation_code(monkeypatch,tmp_path):
+    from geobench.augmentation.diffusion import e2_policy
+    import geobench.augmentation.jobs as jobs
+    before=e2_policy()
+    changed=tmp_path/'jobs.py';changed.write_text('changed')
+    monkeypatch.setattr(jobs,'__file__',str(changed))
+    after=e2_policy()
+    assert before['shared']['dependency_code_sha256'][jobs.__name__] != after['shared']['dependency_code_sha256'][jobs.__name__]

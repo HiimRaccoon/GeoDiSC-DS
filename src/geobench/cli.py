@@ -22,6 +22,11 @@ def main(argv=None):
     preflight.add_argument('--profile', type=Path)
     e1 = commands.add_parser('generate-e1')
     e1.add_argument('--root', required=True, type=Path)
+    e2 = commands.add_parser('generate-e2')
+    e2.add_argument('--root', required=True, type=Path)
+    e2.add_argument('--descriptor', required=True, type=Path)
+    initialize = commands.add_parser('initialize')
+    initialize.add_argument('--root', required=True, type=Path)
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
@@ -40,4 +45,17 @@ def main(argv=None):
     elif args.command == 'generate-e1':
         from .augmentation.traditional import generate_e1
         print(generate_e1(args.root, owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'generate-e2':
+        from .augmentation.diffusion import generate_pool, build_hybrid_pool
+        token = os.environ.get('GEOBENCH_OWNER_TOKEN')
+        if not token:
+            raise ValueError('owner token required')
+        from .config import _unique_pairs
+        descriptor = json.loads(args.descriptor.read_text(encoding='utf-8'), object_pairs_hook=_unique_pairs,
+                                parse_constant=lambda value: (_ for _ in ()).throw(ValueError('nonfinite JSON')))
+        generate_pool(args.root, descriptor, owner_token=token)
+        print(build_hybrid_pool(args.root, descriptor['strength'], owner_token=token))
+    elif args.command == 'initialize':
+        from .classifier import create_initializations
+        print(create_initializations(args.root, owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
     return 0

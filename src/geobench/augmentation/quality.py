@@ -5,6 +5,10 @@ class HoldoutCollision(ValueError):
     """A candidate matched the real validation or test set; freeze is blocked."""
 
 
+class TechnicalRejection(ValueError):
+    """A candidate has a numerical or technical failure eligible for retry."""
+
+
 def validate_candidate_tensor(candidate, expected_size):
     import torch
     if not isinstance(candidate, torch.Tensor) or tuple(candidate.shape) != (3, expected_size[1], expected_size[0]):

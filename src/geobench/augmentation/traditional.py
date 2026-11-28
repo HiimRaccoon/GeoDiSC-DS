@@ -1,4 +1,4 @@
-﻿"""E1 image transformations with confirmed numeric and ordering rules."""
+"""E1 image transformations with confirmed numeric and ordering rules."""
 import math
 import random
 
@@ -99,9 +99,8 @@ def generate_e1(root, *, dataset_root=None, owner_token=None):
     from PIL import Image
     from ..artifacts import active_writer, claim_writer, staging_path, publish_lock, verify_lock, sha256_file, complete_temporary, _inside
     from ..images import decode, decoded_pixel_sha256
-    from .jobs import source_for_slot, seed_for
+    from .jobs import source_for_slot, seed_for, validate_training_groups, validate_shared_research
     from .quality import audit_candidate, HoldoutCollision, validate_candidate_tensor
-    from ..config import verified_configuration
 
     root = Path(root).resolve()
     if not isinstance(owner_token, str) or not owner_token:
@@ -120,24 +119,18 @@ def generate_e1(root, *, dataset_root=None, owner_token=None):
         verify_lock(readiness, boundary=root)
         dataset_root = json.loads((readiness.parent/'V01.json').read_text(encoding='utf-8'))['dataset_root']
     dataset_root = Path(dataset_root).resolve(strict=True)
+    if root == dataset_root or root.is_relative_to(dataset_root) or dataset_root.is_relative_to(root):
+        raise ValueError('dataset and artifact roots must be separate')
     def read_csv(name):
         with (root/'splits'/name).open(encoding='utf-8', newline='') as stream:
             return list(csv.DictReader(stream))
     train, val, test, groups = (read_csv(name) for name in ('train.csv','val.csv','test.csv','class_groups.csv'))
-    source_by_class = {}
-    for row in train:
-        if row['split'] != 'train' or row['is_synthetic'].lower() != 'false':
-            raise ValueError('invalid real training membership')
-        source_by_class.setdefault(int(row['class_id']), []).append(row)
-    for group in groups:
-        class_id, count = int(group['class_id']), int(group['n_train'])
-        if len(source_by_class.get(class_id, [])) != count:
-            raise ValueError('training class count mismatch')
+    source_by_class = validate_training_groups(train, groups)
     for row in train:
         path = _inside(dataset_root, row['relative_path'])
         if sha256_file(path) != row['sha256'] or decoded_pixel_sha256(path) != row['decoded_pixel_sha256']:
             raise ValueError('training source content mismatch')
-    configuration = verified_configuration()
+    configuration = validate_shared_research(root, data_lock)
     train_files = {row['sha256'] for row in train}
     train_pixels = {row['decoded_pixel_sha256'] for row in train}
     holdout_files = {row['sha256'] for row in val + test}
@@ -188,6 +181,53 @@ def generate_e1(root, *, dataset_root=None, owner_token=None):
                         job = {'method':'E1','class_id':class_id,'slot':slot,'attempt':attempt,'source_id':source['image_id'],
                                'source_sha256':source['sha256'], 'source_pixel_sha256':source['decoded_pixel_sha256'],
                                'config_sha256':configuration['sha256']['methods'],'seed':seed}
+                        end = history.find(b'\n', cursor)
+                        if end != -1:
+                            try:
+                                prior = json.loads(history[cursor:end].decode('utf-8'))
+                            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                                raise ValueError('invalid candidate history') from exc
+                            if (not isinstance(prior, dict) or any(prior.get(k) != v for k, v in job.items())
+                                    or prior.get('transforms') != [list(item) for item in transforms]):
+                                raise ValueError('candidate history identity mismatch')
+                            status, reason = prior.get('status'), prior.get('reason')
+                            if status == 'rejected' and 'output_id' not in prior:
+                                if reason not in {'nonfinite_pixels', 'geometry_mismatch', 'pixel_range'}:
+                                    raise ValueError('invalid technical rejection')
+                                record(prior)
+                                continue
+                            output_id = hashlib.sha256(json.dumps(job,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
+                            if prior.get('output_id') != output_id:
+                                raise ValueError('candidate output identity mismatch')
+                            relative = 'images/'+output_id+'.png'
+                            path = stage/relative
+                            try:
+                                file_hash, pixel_hash = sha256_file(path), decoded_pixel_sha256(path)
+                                if decode(path).size != image.size:
+                                    raise ValueError('candidate geometry mismatch')
+                            except OSError as exc:
+                                raise ValueError('completed candidate missing or unreadable') from exc
+                            if file_hash != prior.get('sha256') or pixel_hash != prior.get('decoded_pixel_sha256'):
+                                raise ValueError('completed candidate hash mismatch')
+                            try:
+                                actual = audit_candidate(file_hash,pixel_hash,train_files=train_files,train_pixels=train_pixels,holdout_files=holdout_files,holdout_pixels=holdout_pixels,accepted_files=accepted_files,accepted_pixels=accepted_pixels)
+                            except HoldoutCollision:
+                                if status != 'blocked' or reason != 'holdout_exact_duplicate':
+                                    raise ValueError('candidate holdout decision mismatch')
+                                record(prior)
+                                raise
+                            if status == 'rejected' and actual is not None and reason == actual:
+                                record(prior)
+                                continue
+                            if status != 'accepted' or reason is not None or actual is not None:
+                                raise ValueError('candidate decision mismatch')
+                            record(prior)
+                            accepted_files.add(file_hash); accepted_pixels.add(pixel_hash)
+                            rows.append({'image_id':output_id,'class_id':class_id,'source_id':source['image_id'],
+                                         'source_sha256':source['sha256'], 'source_pixel_sha256':source['decoded_pixel_sha256'],
+                                         'method':'E1', 'job_id':output_id, 'seed':seed, 'method_config_sha256':configuration['sha256']['methods'],
+                                         'relative_path':'augmentation/E1/'+relative,'sha256':file_hash,'decoded_pixel_sha256':pixel_hash,'sample_type':'traditional'})
+                            break
                         result = apply_transforms(x, transforms, generator=torch.Generator().manual_seed(seed))
                         technical_failure = validate_candidate_tensor(result, image.size)
                         if technical_failure:

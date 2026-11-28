@@ -82,10 +82,10 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 ### T05 local progress — implementation incomplete
 
 - E1 transform selection/numerics, exact-hash holdout/duplicate audit and a fixture-tested shared E1 pool path now exist. The pool verifies common/E0 dependencies and real source hashes, keeps a deterministic per-attempt ledger, resumes matching staged prefixes, and publishes `pools/E1/pool_lock.json` after its generation lock.
-- A native-resolution E2 img2img loop is exercised with mock VAE/text/UNet/scheduler providers, including strength-dependent active steps, paired latent noise and untruncated token overflow rejection. E2 production snapshot loading, pool/QC orchestration and real model conformance are not yet implemented or verified.
-- Shared classifier construction from hash-verified weights has a mock fixture. Initialization artifacts, full training, validation and checkpoint/resume remain unimplemented. T05/T06 and G-P1 remain unchecked.
+- A native-resolution E2 img2img loop is exercised with mock VAE/text/UNet/scheduler providers, including strength-dependent active steps, paired latent noise and untruncated token overflow rejection. A local-snapshot runtime loader and fixture-tested candidate/hybrid pool publication exist; real model conformance remains unverified.
+- Shared classifier construction and per-seed initialization use verified model/runtime locks. A fixture-tested training core saves epoch-boundary state and resumes deterministically; production run/data-loader orchestration and published checkpoint contracts remain incomplete. T05/T06 and G-P1 remain unchecked.
 - Review follow-up: E1 generation records policy/backend identity before candidates and preserves source/config provenance, technical rejection/shortage and locked pool counts. The img2img primitive rejects incompatible scheduler settings and PyTorch modules outside FP32/eval. Tests use mocks and do not establish actual model compatibility. Full local regression: **133 passed**.
-- Next: build and integrate the E2 snapshot/runtime provider and candidate/hybrid pool orchestration, then shared initialization/training/resume. Independent T07–T11 work remains authorized. No UIT runtime checks or scientific jobs have been performed.
+- Completed E1/E2 ledger entries are replayed with identity, content and duplicate checks rather than regenerated; partial ledger entries still require deterministic replay. Next: complete production training orchestration and remaining E2 conformance and recovery tests. Independent T07–T11 work remains authorized. No UIT runtime checks or scientific jobs have been performed.
 
 ### T05 — Deterministic E1 and E2 generation
 
@@ -108,6 +108,12 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - [ ] G-P1 — Close implementation P1 after T04 inspection machinery and T05/T06 local tests pass; actual UIT findings are tracked separately. Final GPU evidence remains role-specific V08–V10; this gate does not require DINO weights.
 
 ## P2 — E3 realization
+
+### Local numerical progress — incomplete
+
+- Added and fixture-tested active-time/CADS statistics, independent condition streams, CFG/CCFG distances and guidance integration into the shared mock img2img loop. Added FP32 cosine centroid/confuser math and pre-normalization same-class Mixup primitives; added nine-record strength selection with exact tie-break.
+- Strength selection now verifies locked nine-run checkpoint and history evidence before publishing its selection; official binding and end-to-end training remain outstanding. These are not completed T07–T09 pipelines: reference-bank generation, locked DINO processor/extraction, RNG checkpoint integration, full guidance diagnostics and pool management remain outstanding.
+- Latest integrated regression: **163 passed**. No GPU/model/UIT scientific run has been performed.
 
 ### T07 — CADS, CCFG and Geo guidance
 
@@ -135,7 +141,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 **Implementation dependencies:** T01/T03/T05/T06 contracts and T08 for A4, using fixtures where necessary. **Targets:** `src/geobench/{cli,config,artifacts}.py`, `tests/{test_config_artifacts,test_evaluation_reporting}.py`.
 
-- [ ] T09.1 — Test nine-run completeness, mean Validation Tail Macro-F1 at each run's overall-validation-selected checkpoint and smaller-strength exact tie-break; missing evidence blocks selection.
+- [x] T09.1 — Test nine-run completeness, mean Validation Tail Macro-F1 at each run's overall-validation-selected checkpoint and smaller-strength exact tie-break; missing evidence blocks selection. Evidence: `tests/test_selection.py` exercises nine-run selection, missing/duplicate/invalid records, checkpoint/history consistency and immutable lock dependencies; included in the 163-test regression suite.
 - [ ] T09.2 — Implement selected-strength lock and all-three-seed verified official E1E2 bindings. Keep source candidates immutable; reject identity/history/manifest mismatch and support the fresh-three-seed alternative without selective seed reruns.
 - [ ] T09.3 — Implement frozen descriptors for all 18 official identities and A4→A3 canonical pool binding; test no cycles, extra generation or duplicate Base identities.
 - [ ] T09.4 — Run relevant configuration/binding tests. **Acceptance:** execution accounting is 24 unique classifier executions with verified reuse or 27 with fresh E1E2; nine tuning runs remain identifiable and unselected runs are never tested.
