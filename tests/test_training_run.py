@@ -60,15 +60,47 @@ def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path,
             kwargs['on_epoch']=interrupt
         return training._train_epochs(*args,**kwargs)
     monkeypatch.setattr(training,'train_epochs',fixture_train)
-    with pytest.raises(RuntimeError, match='fixture interruption'):
+    import threading
+    from geobench.artifacts import active_writer
+    held=threading.Event(); release=threading.Event()
+    def hold_root():
+        with active_writer(root):
+            held.set(); release.wait(timeout=30)
+    holder=threading.Thread(target=hold_root); holder.start(); assert held.wait(timeout=10)
+    try:
+        with pytest.raises(RuntimeError, match='fixture interruption'):
+            training.train_run(root,'E0/42',owner_token='fixture')
+    finally:
+        release.set(); holder.join(timeout=10)
+    assert not (run/'checkpoint_lock.json').exists()
+    import geobench.artifacts as artifacts
+    original_link=artifacts.os.link
+    def interrupt_publication(source,destination):
+        if str(destination).endswith('checkpoint_lock.json'):
+            raise OSError('fixture publication interruption')
+        return original_link(source,destination)
+    monkeypatch.setattr(artifacts.os,'link',interrupt_publication)
+    with pytest.raises(ValueError,match='publish'):
         training.train_run(root,'E0/42',owner_token='fixture')
     assert not (run/'checkpoint_lock.json').exists()
+    monkeypatch.setattr(artifacts.os,'link',original_link)
     lock=training.train_run(root,'E0/42',owner_token='fixture')
     record=verify_lock(lock,boundary=root)
     assert record['identity'].startswith('run:E0/42:')
-    assert {'best_checkpoint.pt','last_checkpoint.pt','history.json','validation_at_best.json'} <= set(record['files'])
+    assert {'best_checkpoint.pt','last_checkpoint.pt','history.json','validation_at_best.json',
+            'config.yaml','run_metadata.json','history.csv','lr_steps.csv','metrics.json'} <= set(record['files'])
     assert record['dependencies'][readiness['path']]==readiness['sha256']
     assert len(json.loads((run/'history.json').read_text()))==20
+    with (run/'history.csv').open(newline='') as stream: history=list(csv.DictReader(stream))
+    with (run/'lr_steps.csv').open(newline='') as stream: steps=list(csv.DictReader(stream))
+    assert len(history)==len(steps)==20
+    assert {'validation_loss','train_loss','samples','optimizer_steps'} <= set(history[0])
+    assert {'step','epoch','step_in_epoch','lr'} <= set(steps[0])
+    metadata=json.loads((run/'run_metadata.json').read_text())
+    assert metadata['seed']==42 and metadata['counts']['real']==1
+    assert any(event['event']=='failure' for event in metadata['execution_history'])
+    assert any(event['event']=='resume' for event in metadata['execution_history'])
+    assert json.loads((run/'metrics.json').read_text())['test'] is None
     assert training.train_run(root,'E0/42',owner_token='fixture')==lock
     (run/'descriptor.json').write_text((run/'descriptor.json').read_text()+' ')
     with pytest.raises(ValueError,match='identity'):

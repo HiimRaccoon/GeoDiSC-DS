@@ -91,8 +91,8 @@ def test_checkpoint_has_version_and_rejects_unrecognized_schema(tmp_path):
         train_epochs(model,train,val,{'tail':[0,1]},generator,tmp_path,identity='fixture',on_epoch=interrupt)
     path=tmp_path/'last_checkpoint.pt'
     checkpoint=torch.load(path,weights_only=True)
-    assert checkpoint['schema_version']==1
-    checkpoint['schema_version']=2
+    assert checkpoint['schema_version']==2
+    checkpoint['schema_version']=1
     torch.save(checkpoint,path)
     with pytest.raises(ValueError,match='schema'):
         train_epochs(model,train,val,{'tail':[0,1]},generator,tmp_path,identity='fixture')
@@ -131,3 +131,36 @@ def test_a4_training_mixes_anchor_metadata_before_normalization(tmp_path, monkey
     saved=torch.load(tmp_path/'last_checkpoint.pt',weights_only=True)
     assert saved['mixup_seed']==42 and len(saved['mixup_history'])==1
     assert saved['mixup_history'][0]['selected_batches']==[i for i, event in enumerate(calls) if event['selected']]
+
+
+def test_a4_interrupted_run_replays_identical_mixup_and_weights(tmp_path):
+    from torch.utils.data import Dataset
+    class Anchors(Dataset):
+        def __len__(self): return 4
+        def __getitem__(self,index):
+            return {'images':torch.full((3,2,2),.1+index*.1),'labels':0,'image_id':str(index),
+                    'sample_type':'final_synthetic','n_original':2,'n_train':1}
+        def real_pool(self,labels):
+            return {0:{'images':torch.full((1,3,2,2),.8),'ids':['real']}}
+    def create_model():
+        return torch.nn.Sequential(torch.nn.Flatten(),torch.nn.Linear(12,8),torch.nn.Dropout(.2),torch.nn.Linear(8,124))
+    torch.manual_seed(5); initial=create_model().state_dict()
+    def setup():
+        model=create_model();model.load_state_dict(initial)
+        generator=torch.Generator().manual_seed(42)
+        train=DataLoader(Anchors(),batch_size=2,shuffle=True,generator=generator)
+        val=DataLoader(TensorDataset(torch.zeros(1,3,2,2),torch.tensor([0])),batch_size=1)
+        return model,train,val,generator
+    model,train,val,generator=setup();torch.manual_seed(99)
+    uninterrupted=train_epochs(model,train,val,{'tail':[0]},generator,tmp_path/'full',identity='a4',mixup_seed=42)
+    expected=[value.detach().clone() for value in model.parameters()]
+    model,train,val,generator=setup();torch.manual_seed(99)
+    def interrupt(epoch):
+        if epoch==3: raise RuntimeError('stop')
+    with pytest.raises(RuntimeError,match='stop'):
+        train_epochs(model,train,val,{'tail':[0]},generator,tmp_path/'resume',identity='a4',mixup_seed=42,on_epoch=interrupt)
+    model,train,val,generator=setup()
+    resumed=train_epochs(model,train,val,{'tail':[0]},generator,tmp_path/'resume',identity='a4',mixup_seed=42)
+    assert resumed['mixup_history']==uninterrupted['mixup_history']
+    assert resumed['history']==uninterrupted['history']
+    assert all(torch.equal(left,right) for left,right in zip(expected,model.parameters()))
