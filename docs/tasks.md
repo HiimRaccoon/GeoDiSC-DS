@@ -113,6 +113,10 @@ Local progress: manifest-backed datasets verify split/pool and source hashes, an
 
 ### Local numerical progress — incomplete
 
+- E3 generation now reuses the E2 sampler/ledger/QC engine for reference and A1/A2/A3 roles, with selected-strength dependencies, separate reference RNG and cross-role duplicate rejection. Fixture integration covers a reference bank, replay, A1 final generation and its hybrid pool; A2/A3 production integration and full G10 diagnostic conformance remain open.
+- DINO extraction/mining publishes locked FP32 arrays and row metadata using the pinned model/official processor loader. A 2,480-reference mock integration checks batches, final partial batch, array shapes, tie-breaking and cache replay. Actual model/processor and GPU verification remain V06/V10; full model-component validation and adversarial recovery tests remain open.
+- Regression evidence for this integration: full local suite **176 passed**; after adding E3/guidance source hashes to policy, the four focused generation/extraction integration tests passed again. No additional T07/T08 gate is closed by these partial results.
+
 - Added and fixture-tested active-time/CADS statistics, independent condition streams, CFG/CCFG distances and guidance integration into the shared mock img2img loop. Added FP32 cosine centroid/confuser math and pre-normalization same-class Mixup primitives; added nine-record strength selection with exact tie-break.
 - Strength selection now verifies locked nine-run checkpoint and history evidence before publishing its selection; official binding and end-to-end training remain outstanding. These are not completed T07–T09 pipelines: reference-bank generation, locked DINO processor/extraction, RNG checkpoint integration, full guidance diagnostics and pool management remain outstanding.
 - Latest integrated regression: **163 passed**. No GPU/model/UIT scientific run has been performed.

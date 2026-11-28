@@ -121,7 +121,7 @@ def _load_runtime(snapshot):
             'text_encoder':pipeline.text_encoder, 'scheduler':scheduler, 'device':'cuda'}
 
 
-def generate_pool(root, descriptor, *, owner_token):
+def generate_pool(root, descriptor, *, owner_token, _e3=None):
     """Freeze one E2 strength pool from locked data, E0/E1, and model inputs."""
     import csv
     import hashlib
@@ -145,6 +145,9 @@ def generate_pool(root, descriptor, *, owner_token):
     if not isinstance(descriptor,dict) or set(descriptor) != {'strength','model_lock','model_sha256','dataset_root'}:
         raise ValueError('invalid E2 descriptor')
     strength=descriptor['strength']
+    variant = 'E2' if _e3 is None else _e3['variant']
+    reference = _e3 is not None and _e3['role'] == 'reference'
+    sample_type = 'reference' if reference else 'final_synthetic'
     if type(strength) is not float or strength not in (.25,.35,.5):
         raise ValueError('strength must be in the confirmed grid')
     dataset=Path(descriptor['dataset_root']).resolve(strict=True)
@@ -191,18 +194,27 @@ def generate_pool(root, descriptor, *, owner_token):
     configuration=validate_shared_research(root, data_lock)
     runtime=_load_runtime(snapshot)
     prompts={'base':['',*[BASE_PROMPT.format(country_name=group['class_name']) for group in groups]]}
+    if variant == 'A3':
+        from ..config import METHODS
+        prompts['geo']=[METHODS['geo']['negative_prompt'],*[METHODS['geo']['prompt'].format(country_name=g['class_name']) for g in groups]]
     audit=audit_prompts(runtime['tokenizer'],prompts)
     if audit['overflow_roles']:
         raise ValueError('base prompt exceeds tokenizer context')
     tag=strength.__str__()
-    target=root/'augmentation/E2'/('strength_'+tag)
+    prefix = f'augmentation/E2/strength_{tag}' if _e3 is None else _e3['prefix']
+    target=root/prefix
+    generation_identity = 'e2-generation:'+tag if _e3 is None else _e3['identity']
     token_value=hashlib.sha256(('e2:'+tag+'\0'+owner_token).encode()).hexdigest()
-    with active_writer(root):
-        token=claim_writer(target,'e2-generation:'+tag,token=token_value,resume=(target/'.writer').exists())
+    if _e3 is not None and variant=='A2':
+        token_value=hashlib.sha256(('mining\0'+owner_token).encode()).hexdigest()
+    with active_writer(target):
+        token=claim_writer(target,generation_identity,token=token_value,resume=(target/'.writer').exists())
         try:
             stage=staging_path(target,token)
             policy={'configuration':configuration,'model_sha256':descriptor['model_sha256'],'strength':strength,
                     'generator_identity':e2_policy(),'model':metadata}
+            if _e3 is not None:
+                policy['e3'] = _e3
             complete_temporary(stage/'config.json',(json.dumps(policy,sort_keys=True,separators=(',', ':'),allow_nan=False)+'\n').encode())
             complete_temporary(stage/'token_audit.json',(json.dumps(audit,sort_keys=True,separators=(',', ':'),allow_nan=False)+'\n').encode())
             ledger=stage/'candidates.jsonl'
@@ -225,16 +237,16 @@ def generate_pool(root, descriptor, *, owner_token):
             accepted_files=set();accepted_pixels=set(); rows=[]; budgets={}
             for group in sorted(groups,key=lambda item:int(item['class_id'])):
                 class_id=int(group['class_id']); count=int(group['n_train']); original=int(group['n_original'])
-                if count >= 20 or original == 1: continue
-                quota=min(100,5*count)-count; budgets[str(class_id)]=quota
+                if not reference and (count >= 20 or original == 1): continue
+                quota=20 if reference else min(100,5*count)-count; budgets[str(class_id)]=quota
                 sources={r['relative_path']:r for r in by_class[class_id]}
                 for slot in range(quota):
-                    source=sources[source_for_slot(list(sources),class_id,slot,method='E2')]
+                    source=sources[source_for_slot(list(sources),class_id,slot,method='E2',reference=reference)]
                     image=decode(_inside(dataset,source['relative_path']))
                     for attempt in range(5):
                         index=5*slot+attempt
-                        vae_seed=seed_for('E2',class_id,index,'vae');latent_seed=seed_for('E2',class_id,index,'latent')
-                        job={'method':'E2','strength':strength,'class_id':class_id,'class_name':group['class_name'],'slot':slot,'attempt':attempt,
+                        vae_seed=seed_for('E2',class_id,index,'vae',reference=reference);latent_seed=seed_for('E2',class_id,index,'latent',reference=reference)
+                        job={'method':variant,'strength':strength,'class_id':class_id,'class_name':group['class_name'],'slot':slot,'attempt':attempt,
                              'source_id':source['image_id'],'source_sha256':source['sha256'],'source_pixel_sha256':source['decoded_pixel_sha256'],
                              'vae_seed':vae_seed,'latent_seed':latent_seed,'config_sha256':configuration['sha256']['methods']}
                         # Complete, durable decisions are replayed from their original bytes.
@@ -273,17 +285,21 @@ def generate_pool(root, descriptor, *, owner_token):
                                     raise ValueError('candidate holdout decision mismatch')
                                 record(prior)
                                 raise
+                            if actual_reason is None and _e3 is not None and (file_hash in _e3['excluded_files'] or pixel_hash in _e3['excluded_pixels']):
+                                actual_reason='reference_final_exact_duplicate'
                             if status == 'accepted' and actual_reason is None and reason is None:
                                 record(prior);accepted_files.add(file_hash);accepted_pixels.add(pixel_hash)
-                                rows.append({**job,'image_id':output_id,'relative_path':f'augmentation/E2/strength_{tag}/'+relative,
-                                             'sha256':file_hash,'decoded_pixel_sha256':pixel_hash,'sample_type':'final_synthetic'})
+                                rows.append({**job,'image_id':output_id,'relative_path':prefix+'/'+relative,
+                                             'sha256':file_hash,'decoded_pixel_sha256':pixel_hash,'sample_type':sample_type})
                                 break
                             if status == 'rejected' and reason == actual_reason and actual_reason is not None:
                                 record(prior)
                                 continue
                             raise ValueError('candidate decision mismatch')
                         try:
-                            candidate,provenance=generate_image(image,group['class_name'],strength,**runtime,vae_seed=vae_seed,latent_seed=latent_seed)
+                            kwargs={} if _e3 is None else {'variant':variant,'role':_e3['role'],'class_id':class_id,'slot':slot,'attempt':attempt,
+                                'confuser_country':_e3['confusers'].get(str(class_id))}
+                            candidate,provenance=generate_image(image,group['class_name'],strength,**runtime,vae_seed=vae_seed,latent_seed=latent_seed,**kwargs)
                         except TechnicalRejection as exc:
                             record({**job,'status':'rejected','reason':str(exc)})
                             continue
@@ -303,12 +319,14 @@ def generate_pool(root, descriptor, *, owner_token):
                         except HoldoutCollision:
                             record({**job,'output_id':output_id,'sha256':file_hash,'decoded_pixel_sha256':pixel_hash,
                                     'status':'blocked','reason':'holdout_exact_duplicate'});raise
+                        if reason is None and _e3 is not None and (file_hash in _e3['excluded_files'] or pixel_hash in _e3['excluded_pixels']):
+                            reason='reference_final_exact_duplicate'
                         record({**job,'output_id':output_id,'sha256':file_hash,'decoded_pixel_sha256':pixel_hash,
                                 'status':'accepted' if reason is None else 'rejected','reason':reason,'provenance':provenance})
                         if reason is None:
                             accepted_files.add(file_hash);accepted_pixels.add(pixel_hash)
-                            rows.append({**job,'image_id':output_id,'relative_path':f'augmentation/E2/strength_{tag}/'+relative,
-                                         'sha256':file_hash,'decoded_pixel_sha256':pixel_hash,'sample_type':'final_synthetic'})
+                            rows.append({**job,'image_id':output_id,'relative_path':prefix+'/'+relative,
+                                         'sha256':file_hash,'decoded_pixel_sha256':pixel_hash,'sample_type':sample_type})
                             break
                     else:
                         record({'method':'E2','class_id':class_id,'slot':slot,'status':'shortage','reason':'five_attempts_rejected'})
@@ -319,12 +337,23 @@ def generate_pool(root, descriptor, *, owner_token):
                     'method','strength','slot','attempt','vae_seed','latent_seed','config_sha256','sha256','decoded_pixel_sha256','sample_type']
             output=io.StringIO(newline='');writer=csv.DictWriter(output,fieldnames=fields,lineterminator='\n');writer.writeheader();writer.writerows(rows)
             complete_temporary(stage/'manifest.csv',output.getvalue().encode())
-            outputs=['config.json','token_audit.json','candidates.jsonl','manifest.csv']+[r['relative_path'].split(f'augmentation/E2/strength_{tag}/',1)[1] for r in rows]
+            outputs=['config.json','token_audit.json','candidates.jsonl','manifest.csv']+[r['relative_path'].removeprefix(prefix+'/') for r in rows]
             dependencies={'splits/lock.json':sha256_file(data_lock),'pools/E0/pool_lock.json':sha256_file(e0_lock),
                           'pools/E1/pool_lock.json':sha256_file(e1_lock),descriptor['model_lock']:descriptor['model_sha256']}
-            generated=publish_lock(target,{'identity':'e2-generation:'+tag,'files':outputs,'dependencies':dependencies,'artifact_root':root,'claim':token})
+            if _e3 is not None:
+                dependencies.update(_e3['dependencies'])
+                diagnostics=[]
+                for event in events:
+                    for step, detail in enumerate(event.get('provenance',{}).get('guidance',[])):
+                        diagnostics.append({**{key:event[key] for key in ('class_id','slot','attempt')},'variant':variant,'role':_e3['role'],'step':step,**detail})
+                complete_temporary(stage/'guidance.jsonl',b''.join((json.dumps(row,sort_keys=True,allow_nan=False)+'\n').encode() for row in diagnostics))
+                outputs.append('guidance.jsonl')
+            generated=publish_lock(target,{'identity':generation_identity,'files':outputs,'dependencies':dependencies,'artifact_root':root,'claim':token,
+                                           'lock_name':'bank_lock.json' if reference else 'lock.json'})
         finally:
             token.close()
+        if _e3 is not None:
+            return generated
         pool=root/'pools/E2'/('strength_'+tag)
         pool_token_value=hashlib.sha256(('e2-pool:'+tag+'\0'+owner_token).encode()).hexdigest()
         pool_token=claim_writer(pool,'e2:'+tag,token=pool_token_value,resume=(pool/'.writer').exists())

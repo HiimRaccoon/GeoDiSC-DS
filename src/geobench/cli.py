@@ -38,6 +38,14 @@ def main(argv=None):
     tune_run.add_argument('--seed', required=True, type=int, choices=(42,123,2026))
     select = commands.add_parser('select-tuning')
     select.add_argument('--root', required=True, type=Path)
+    e3 = commands.add_parser('generate-e3')
+    e3.add_argument('--root',required=True,type=Path)
+    e3.add_argument('--descriptor',required=True,type=Path)
+    e3.add_argument('--variant',required=True,choices=('A1','A2','A3'))
+    e3.add_argument('--reference',action='store_true')
+    mining = commands.add_parser('mine-confusers')
+    mining.add_argument('--root',required=True,type=Path)
+    mining.add_argument('--model-lock',required=True)
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
@@ -88,4 +96,15 @@ def main(argv=None):
                 path=f'tuning/E2/strength_{strength}/seed_{seed}/checkpoint_lock.json'
                 references.append({'strength':strength,'seed':seed,'path':path,'sha256':sha256_file(args.root/path)})
         print(publish_strength_selection(args.root,references,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'generate-e3':
+        from .augmentation.e3 import generate_e3, build_e3_pool
+        from .config import _unique_pairs
+        descriptor=json.loads(args.descriptor.read_text(encoding='utf-8'),object_pairs_hook=_unique_pairs)
+        print(generate_e3(args.root,descriptor,variant=args.variant,reference=args.reference,
+                          owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+        if not args.reference:
+            print(build_e3_pool(args.root,args.variant,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'mine-confusers':
+        from .augmentation.mining import extract_and_mine
+        print(extract_and_mine(args.root,model_lock=args.model_lock,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
     return 0

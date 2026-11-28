@@ -56,6 +56,31 @@ def test_e2_pool_builds_four_synthetics_from_verified_training_source(tmp_path, 
     assert verify_lock(hybrid,boundary=root)['identity']=='candidate-pool:0.25'
     with (hybrid.parent/'manifest.csv').open(newline='') as stream: combined=list(csv.DictReader(stream))
     assert len(combined)==5 and [row['sample_type'] for row in combined].count('real')==1
+    locked(root,'tuning/E2/selection','selected-strength',{'selected_strength.json':b'{"selected_strength":0.25}'},
+           {lock.relative_to(root).as_posix():sha256_file(lock)},'selection_lock.json')
+    generated=[]
+    def guided(image,country,strength,**kwargs):
+        generated.append(kwargs)
+        return torch.full((3,8,8),len(generated)/255), {'guidance':[{'gamma':1,'t_norm':0}]}
+    monkeypatch.setattr('geobench.augmentation.diffusion.generate_image',guided)
+    from geobench.augmentation.e3 import generate_e3
+    bank=generate_e3(root,descriptor,variant='A1',reference=True,owner_token='fixture')
+    assert verify_lock(bank,boundary=root)['identity']=='reference-bank'
+    with (bank.parent/'manifest.csv').open(newline='') as stream: refs=list(csv.DictReader(stream))
+    assert len(refs)==20 and {row['sample_type'] for row in refs}=={'reference'}
+    assert generated[0]['vae_seed'] != calls[0][0]
+    assert generate_e3(root,descriptor,variant='A1',reference=True,owner_token='fixture')==bank
+    assert len(generated)==20
+    final=generate_e3(root,descriptor,variant='A1',owner_token='fixture')
+    assert verify_lock(final,boundary=root)['identity']=='e3-generation:A1'
+    with (final.parent/'manifest.csv').open(newline='') as stream: rows=list(csv.DictReader(stream))
+    assert len(rows)==4 and {r['sample_type'] for r in rows}=={'final_synthetic'}
+    assert generated[20]['vae_seed']==calls[0][0]
+    from geobench.augmentation.e3 import build_e3_pool
+    pool=build_e3_pool(root,'A1',owner_token='fixture')
+    assert verify_lock(pool,boundary=root)['identity']=='pool:E3-A1'
+    with (pool.parent/'manifest.csv').open(newline='') as stream: membership=list(csv.DictReader(stream))
+    assert len(membership)==5 and not any(r['sample_type']=='reference' for r in membership)
 
 
 def test_generation_never_writes_inside_dataset_root(tmp_path):
