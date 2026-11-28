@@ -105,6 +105,8 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 - [ ] T06.3 — Compare uninterrupted and interrupted/resumed fixture state and outputs; reject incompatible identities; replay an interrupted epoch from its last completed boundary. Incomplete resumable work must not return completed-stage success.
 - [ ] T06.4 — Run `pytest tests/test_training_resume.py -q`. **Acceptance:** deterministic resume matches uninterrupted fixtures; official initialization creation waits for verified model/runtime locks and probe-state reset.
 
+Local progress: `training_data.py` supplies manifest-backed real/augmented datasets, locked split/pool verification, source content hashes and confirmed seeded DataLoader settings. `tests/test_training_data.py` covers invalid paths, hashes, real membership and loader configuration. Training orchestration, A4 dataset integration and completed-checkpoint publication are still outstanding; T06 remains open. Full regression: **168 passed**.
+
 - [ ] G-P1 — Close implementation P1 after T04 inspection machinery and T05/T06 local tests pass; actual UIT findings are tracked separately. Final GPU evidence remains role-specific V08–V10; this gate does not require DINO weights.
 
 ## P2 — E3 realization
