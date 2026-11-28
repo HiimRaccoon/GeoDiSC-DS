@@ -91,22 +91,32 @@ def predict_step(context):
         seed = _condition_seed(role,context['class_id'],context['slot'],context['attempt'],context['index'],branch)
         generator = torch.Generator(device=device).manual_seed(seed)
         noise = torch.randn(embedding.shape, generator=generator, device=device, dtype=torch.float32)
-        return corrupt_condition(embedding,noise,gamma), seed
-    positive, positive_seed = condition(context['positive'],'positive')
+        corrupted=corrupt_condition(embedding,noise,gamma)
+        stats={'original_mean':float(embedding.float().mean()),'original_std':float(embedding.float().std(correction=0)),
+               'corrupted_mean':float(corrupted.mean()),'corrupted_std':float(corrupted.std(correction=0))}
+        return corrupted, seed, stats
+    positive, positive_seed,positive_stats = condition(context['positive'],'positive')
     baseline = context['unet'](context['latent'],context['timestep'],encoder_hidden_states=context['baseline']).sample
     raw_positive = context['unet'](context['latent'],context['timestep'],encoder_hidden_states=positive).sample
     diagnostics = {'t_norm':time,'gamma':gamma,'positive_noise_seed':positive_seed,'confuser_noise_seed':None,
-                   'd_pos':None,'d_neg':None,'w_pos':None,'w_neg':None}
+                   'd_pos':None,'d_neg':None,'w_pos':None,'w_neg':None,'temperature':None,'alpha':None,
+                   'positive_statistics':positive_stats,'confuser_statistics':None,
+                   'baseline_type':'artifact_negative' if variant=='A3' else 'empty',
+                   'baseline_norm':float(torch.linalg.vector_norm(baseline.float())),
+                   'positive_prediction_norm':float(torch.linalg.vector_norm(raw_positive.float()))}
     if variant == 'A1':
         result = baseline.float() + 2*(raw_positive.float()-baseline.float())
     else:
         if context['confuser'] is None:
             raise ValueError('confuser embedding required')
-        confuser, confuser_seed = condition(context['confuser'],'confuser')
+        confuser, confuser_seed,confuser_stats = condition(context['confuser'],'confuser')
         raw_negative = context['unet'](context['latent'],context['timestep'],encoder_hidden_states=confuser).sample
         result, stats = combine_predictions(baseline,raw_positive,raw_negative,gamma=gamma)
         diagnostics.update({key: value.detach().cpu().tolist() if isinstance(value,torch.Tensor) else value for key,value in stats.items()})
         diagnostics['confuser_noise_seed'] = confuser_seed
+        diagnostics['confuser_statistics']=confuser_stats
+        diagnostics['confuser_prediction_norm']=float(torch.linalg.vector_norm(raw_negative.float()))
+        diagnostics['alpha']=.8
     if not torch.isfinite(result).all():
         raise TechnicalRejection('nonfinite_guidance_result')
     return result, diagnostics

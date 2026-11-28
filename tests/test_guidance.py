@@ -24,6 +24,10 @@ def test_positive_distance_uses_cfg_sum():
     result,stats=combine_predictions(baseline,positive,negative,gamma=1)
     assert stats['d_pos'].item()==8
     assert torch.isfinite(result).all()
+    expected_positive=4*torch.sigmoid(torch.tensor(.8*8))
+    assert stats['w_pos'].item()==pytest.approx(float(expected_positive))
+    assert stats['w_neg'].item()==-2
+    assert torch.allclose(result,torch.full_like(result,.8*2+.2*float(expected_positive)))
 
 
 def test_predict_step_uses_independent_condition_streams_and_geo_baseline():

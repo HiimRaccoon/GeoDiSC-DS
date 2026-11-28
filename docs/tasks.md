@@ -60,7 +60,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 - P1 remains incomplete: initial profile validation, deterministic job seed/source ordering, and common learning-rate schedule primitives have fixture tests; T04–T06 and G-P1 remain unchecked.
 - Read-only SSH reached the configured login alias on 2026-11-27; environment and home filesystem were inspected. This does not close V01–V06 or verify project paths, model access, quotas, compute-node access or GPU workloads.
-- **T06/T10 recovery hardening:** interruption after `.writer` directory creation but before claim metadata and staging initialization leaves an incomplete persistent claim. Never reclaim it using a local PID check; define and verify an explicit owner-authorized recovery mechanism before claiming T06/T10 recovery complete.
+- **T06/T10 recovery hardening:** new writer initialization persists an identity/token intent before creating the claim directory. Matching owner credentials can finish interrupted claim bytes and staging initialization under the OS lease; a different token is rejected. Legacy incomplete claims without ownership evidence remain blocked. Regression: `test_claim_initialization.py`; no PID-based reclamation is used.
 
 ## P1 — Runtime, generation and shared training
 
@@ -74,7 +74,7 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 **Implementation dependencies:** T01; use local fixture providers while T02/T05–T08/T10 are in progress. **Actual probe dependencies:** shared production providers and verified site/resources. **Targets:** `src/geobench/preflight.py`, `configs/uit.json`, `tests/{test_config_artifacts,test_slurm_contract}.py`; persistent `deployment/` evidence.
 
-- [ ] T04.1 — Implement inspection/probe descriptors with explicit unknown inputs; test invalid QoS/GRES pairs and missing CPU/RAM/root/walltime rejection. Test that profile changes cannot change research settings.
+- [x] T04.1 — Implement inspection/probe descriptors with explicit unknown inputs; test invalid QoS/GRES pairs and missing CPU/RAM/root/walltime rejection. Test that profile changes cannot change research settings. Evidence: configuration/preflight regressions and locked probe-input tests.
 - [ ] T04.2 — Prepare site/environment/storage inspection and immutable snapshot staging using V01–V06. Record unresolved access separately by role; do not make DINO access a global readiness flag.
 - [ ] T04.3 — Implement probes calling the shared production modules, not duplicate workload implementations. Defer actual GPU probe closure to V08–V10 after providers and Slurm scripts exist.
 - [ ] T04.4 — Run relevant configuration/preflight tests. **Acceptance:** every pending input has evidence/status and a scoped gate; no unmeasured resource result is marked passing.
@@ -100,9 +100,9 @@ Evidence: full suite **89 passed**, including 17 focused F06–F09 cases and int
 
 **Implementation dependencies:** T01–T03 interfaces or faithful fixtures; actual model/runtime locks gate official initialization only. **Targets:** `src/geobench/{classifier,training}.py`, `tests/test_training_resume.py`.
 
-- [ ] T06.1 — Test shared initialization per seed, anchor traversal including last partial batch, exact optimizer-step/scheduler counts, validation RNG isolation and earliest-epoch checkpoint tie-break.
+- [x] T06.1 — Test shared initialization per seed, anchor traversal including last partial batch, exact optimizer-step/scheduler counts, validation RNG isolation and earliest-epoch checkpoint tie-break. Evidence: classifier, training-data and training-resume fixture suites.
 - [ ] T06.2 — Implement the full Common runtime without condition-specific defaults; use shared metrics, completed-epoch last/best checkpoints and complete model/optimizer/scheduler/RNG/sampler/history state.
-- [ ] T06.3 — Compare uninterrupted and interrupted/resumed fixture state and outputs; reject incompatible identities; replay an interrupted epoch from its last completed boundary. Incomplete resumable work must not return completed-stage success.
+- [x] T06.3 — Compare uninterrupted and interrupted/resumed fixture state and outputs; reject incompatible identities; replay an interrupted epoch from its last completed boundary. Incomplete resumable work must not return completed-stage success. Evidence: deterministic common/A4 replay and interrupted training/publication integration.
 - [ ] T06.4 — Run `pytest tests/test_training_resume.py -q`. **Acceptance:** deterministic resume matches uninterrupted fixtures; official initialization creation waits for verified model/runtime locks and probe-state reset.
 
 Local progress: manifest-backed datasets verify split/pool and source hashes, and use confirmed seeded DataLoader settings. Official `train` orchestration validates descriptor, readiness, research config, runtime and initialization locks; it resumes epoch-boundary state and publishes a checkpoint lock only after 20 completed epochs. Leases are scoped to individual runs; schema version 2 includes Mixup state. A4 batches carry pre-normalization pixels and anchor metadata through same-class Mixup, with decisions retained in checkpoint history. Fixture tests compare A4 uninterrupted/resumed weights and decisions, and exercise interrupted E0 training and checkpoint publication. Runs export configuration, metadata including failure/resume events, CSV history and learning-rate steps, and validation metrics. The locked E2 protocol and shared trainer now support nine strength/seed identities; fixture integration trains all nine and supplies their locks to selection. No actual CUDA execution was performed. Remaining work includes full A4 orchestration coverage, recovery hardening, tuning fairness review and integration with T09/T10; T06 remains open. Full regression: **175 passed**.
@@ -126,7 +126,7 @@ Local progress: manifest-backed datasets verify split/pool and source hashes, an
 **Implementation dependencies:** T05 interface or faithful mocked sampler; no actual diffusion model is required. **Targets:** `src/geobench/augmentation/guidance.py`, extend `augmentation/diffusion.py`, `tests/test_guidance.py`.
 
 - [ ] T07.1 — Test E3 Eq. (1)–(11), active-timestep endpoints/N=1, FP32 population statistics across all tokens/features, invalid/zero std rejection and fresh independent condition noise streams.
-- [ ] T07.2 — Test CFG-derived positive distance with CHW sum: baseline 0, raw positive `[1,1]`, CFG 2 gives `d_pos=8`; test adaptive scales, interpolation and exactly one scheduler step per active timestep.
+- [x] T07.2 — Test CFG-derived positive distance with CHW sum: baseline 0, raw positive `[1,1]`, CFG 2 gives `d_pos=8`; test adaptive scales, interpolation and exactly one scheduler step per active timestep. Evidence: explicit scale/interpolation assertions and shared-sampler step-count tests.
 - [ ] T07.3 — Implement confirmed branch roles, paired E2/A1/A2/A3 source/VAE/latent identities, independent reference/CADS namespaces, unchanged Geo prompts and per-timestep JSONL diagnostics. Preserve G08 Geo-specific conventions rather than upstream differences.
 - [ ] T07.4 — Run `pytest tests/test_guidance.py -q`. **Acceptance:** numerical fixtures and stream replay pass; prompt overflow is reported before any modification; no extra tuning or semantic filtering. Track real tokenizer audit as V07 and numerical evidence as V11.
 
@@ -149,32 +149,38 @@ Local progress: manifest-backed datasets verify split/pool and source hashes, an
 
 - [x] T09.1 — Test nine-run completeness, mean Validation Tail Macro-F1 at each run's overall-validation-selected checkpoint and smaller-strength exact tie-break; missing evidence blocks selection. Evidence: `tests/test_selection.py` exercises nine-run selection, missing/duplicate/invalid records, checkpoint/history consistency and immutable lock dependencies; included in the 163-test regression suite.
 - [ ] T09.2 — Implement selected-strength lock and all-three-seed verified official E1E2 bindings. Keep source candidates immutable; reject identity/history/manifest mismatch and support the fresh-three-seed alternative without selective seed reruns.
-- [ ] T09.3 — Implement frozen descriptors for all 18 official identities and A4→A3 canonical pool binding; test no cycles, extra generation or duplicate Base identities.
+- [x] T09.3 — Implement frozen descriptors for all 18 official identities and A4→A3 canonical pool binding; test no cycles, extra generation or duplicate Base identities. Evidence: 18-descriptor fixture, A4 pool/manifest/anchor-step binding, existing cycle/identity rejection regressions.
 - [ ] T09.4 — Run relevant configuration/binding tests. **Acceptance:** execution accounting is 24 unique classifier executions with verified reuse or 27 with fresh E1E2; nine tuning runs remain identifiable and unselected runs are never tested.
 
 ### T10 — Slurm templates, submission and recovery
 
 **Implementation dependencies:** T01/T04/T09 descriptor contracts or faithful fixtures. **Actual submissions:** site smoke/probe submissions require V01–V03 and their role inputs; long scientific jobs additionally require V13 and role readiness. **Targets:** `scripts/slurm/{cpu.sbatch,gpu.sbatch,submit.sh}`, `tests/test_slurm_contract.py`, CLI descriptor handling.
 
-- [ ] T10.1 — Implement thin module/env/srun wrappers, frozen array-index manifests, resolved resource arguments, persistent logs and JobID/dependency ledger. Use one task/assigned MIG GPU and one writer per pool; no distributed execution framework.
+- [x] T10.1 — Implement thin module/env/srun wrappers, frozen array-index manifests, resolved resource arguments, persistent logs and JobID/dependency ledger. Use one task/assigned MIG GPU and one writer per pool; no distributed execution framework. Evidence: mocked submission, verified resource/array limits, interpreter-seed dispatch and replacement ledger tests.
 - [ ] T10.2 — Test array identity stability, unknown resource rejection, single-writer ownership, lock verification despite `afterok`, incomplete-stage non-success and recovery with replacement JobID relationships. Use `afterany` only for incident collection.
-- [ ] T10.3 — Individually run `bash -n scripts/slurm/cpu.sbatch`; record its exit status and require zero.
-- [ ] T10.4 — Individually run `bash -n scripts/slurm/gpu.sbatch`; record its exit status and require zero.
-- [ ] T10.5 — Individually run `bash -n scripts/slurm/submit.sh`; record its exit status and require zero. Recheck every added/modified Slurm shell script individually as well.
+- [x] T10.3 — Individually run `bash -n scripts/slurm/cpu.sbatch`; record its exit status and require zero. Evidence: local Git Bash exit 0.
+- [x] T10.4 — Individually run `bash -n scripts/slurm/gpu.sbatch`; record its exit status and require zero. Evidence: local Git Bash exit 0.
+- [x] T10.5 — Individually run `bash -n scripts/slurm/submit.sh`; record its exit status and require zero. Recheck every added/modified Slurm shell script individually as well. Evidence: local Git Bash exit 0.
 - [ ] T10.6 — Run `pytest tests/test_slurm_contract.py -q`. **Acceptance:** all three independent syntax checks and contract tests pass; actual compute-node smoke/signal/requeue tests remain V13, not implied by shell parsing.
 
 ### T11 — Evaluation, exports and final reporting
 
 **Implementation dependencies:** T02/T03/T06/T09 interfaces or faithful fixtures; actual trained models are not required for local tests. **Targets:** `src/geobench/{evaluation,reporting}.py`, `tests/test_evaluation_reporting.py`.
 
-- [ ] T11.1 — Test missing/duplicate IDs, wrong labels, nonfinite logits, row-map mismatch, raw `[N,124]` logits and full `124×124` confusion consistency; recompute CSV rankings/metrics from raw outputs.
+- [x] T11.1 — Test missing/duplicate IDs, wrong labels, nonfinite logits, row-map mismatch, raw `[N,124]` logits and full `124×124` confusion consistency; recompute CSV rankings/metrics from raw outputs. Evidence: prediction export/recomputation tests, including deliberately re-signed fixture files with incorrect labels/row maps.
 - [ ] T11.2 — Implement Evaluation §§2–8 inference, per-run artifacts, coverage verification, atomic evaluation locks, main/ablation aliases, group/per-class tables and reporting without checkpoint reselection.
-- [ ] T11.3 — Test full-precision raw values versus two-decimal percentages, sample std, N/A versus incomplete results, exactly three seeds, no unselected-candidate test and per-run test eligibility without an all-18 barrier.
+- [x] T11.3 — Test full-precision raw values versus two-decimal percentages, sample std, N/A versus incomplete results, exactly three seeds, no unselected-candidate test and per-run test eligibility without an all-18 barrier. Evidence: metrics/reporting fixtures, missing-seed rejection, aliases and individual E0/reused-E1E2 evaluation integration.
 - [ ] T11.4 — Run `pytest tests/test_evaluation_reporting.py -q`, then integrated `pytest tests -q`. **Acceptance:** confirmed acceptance checks across all five specs have test/evidence coverage; templates contain no invented results.
 
 - [ ] G-P3 — Close local implementation integration after T09–T11 tests and shell checks pass. Deployment separately freezes reviewed source/config/environment identities, closes applicable V gates with real shared-code probes, and creates three shared initializations after discarding probe state before corresponding scientific runs.
 
 ## Code-first transition evidence — 2026-11-28
+
+- Consolidated local integration now includes official descriptors and whole-triplet E1E2 reuse/fresh planning, A4 pool binding, frozen Slurm arrays/submission intents and replacement ledgers, fixed-checkpoint evaluation/raw exports, and recomputed eighteen-run reports. CLI interfaces are in `docs/PIPELINES.md`.
+- Training checkpoint schema 3 retains the complete best-epoch optimizer/RNG/history snapshot on CPU for stable publication recovery. Training's frozen validation snapshot is separate from evaluation's finalized `metrics.json`; no locked training artifact is rewritten for test results.
+- Shared-provider classifier/diffusion/DINO probe orchestration, model snapshot materialization, environment/runtime freezing, read-only private-site inspection and scoped readiness receipts now exist. Tests use mock site/model observations. They do not verify UIT, model compatibility or actual Slurm behavior.
+- Final-source local regression: **190 passed**. Each of the three Slurm shell files passed its own `bash -n` invocation with exit 0. No jobs were submitted, no UIT deployment was performed, and no original dataset files were modified.
+- Open implementation acceptance still requires the unchecked T04–T11 conformance items, especially comprehensive recovery/adversarial coverage, full A4 run orchestration coverage, strict complete G10 diagnostics/failure schemas and final report/provenance completeness. Phase gates remain open; passing these fixtures is not a claim that T01–T11 or the scientific benchmark is complete.
 
 - Documentation aligns implementation, deployment verification and separately approved scientific execution milestones. Existing T01–T11 and V/R/F identifiers and prior test evidence are retained.
 - T04 snapshot verification now supports file symlinks within an explicitly trusted cache root and rejects escaping links. T04 remains incomplete; actual site, storage, snapshot component and GPU evidence remain pending.

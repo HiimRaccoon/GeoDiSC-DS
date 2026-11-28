@@ -24,11 +24,13 @@ def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path,
     import io
     def table(rows):
         out=io.StringIO(newline=''); writer=csv.DictWriter(out,list(rows[0]));writer.writeheader();writer.writerows(rows);return out.getvalue().encode()
-    groups=[{'class_id':'0','class_name':'x','n_original':'2','n_train':'1','group':'extreme-tail'}]
+    groups=[{'class_id':str(c),'class_name':'x' if c==0 else str(c),'n_original':'2','n_train':'1' if c==0 else '0',
+             'group':'extreme-tail','singleton':'false'} for c in range(124)]
     fingerprint='a'*64
     from geobench.config import verified_configuration
     readiness=locked('deployment/data_readiness','data-readiness',{'V01.json':json.dumps({'dataset_root':str(dataset)}).encode()})
     data=locked('splits','common-data:'+fingerprint,{'train.csv':table([entry]),'val.csv':table([{**entry,'split':'val'}]),
+        'test.csv':table([{**entry,'split':'test'}]),
         'class_groups.csv':table(groups),'configuration.json':json.dumps(verified_configuration()).encode()}, {readiness['path']:readiness['sha256']})
     pool=locked('pools/E0','e0:'+fingerprint,{'pool.json':json.dumps({'manifest_sha256':sha256_file(root/'splits/train.csv')}).encode()},
                 {data['path']:data['sha256']},'pool_lock.json')
@@ -88,7 +90,7 @@ def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path,
     record=verify_lock(lock,boundary=root)
     assert record['identity'].startswith('run:E0/42:')
     assert {'best_checkpoint.pt','last_checkpoint.pt','history.json','validation_at_best.json',
-            'config.yaml','run_metadata.json','history.csv','lr_steps.csv','metrics.json'} <= set(record['files'])
+            'config.yaml','run_metadata.json','history.csv','lr_steps.csv','training_metrics.json'} <= set(record['files'])
     assert record['dependencies'][readiness['path']]==readiness['sha256']
     assert len(json.loads((run/'history.json').read_text()))==20
     with (run/'history.csv').open(newline='') as stream: history=list(csv.DictReader(stream))
@@ -102,6 +104,15 @@ def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path,
     assert any(event['event']=='resume' for event in metadata['execution_history'])
     assert json.loads((run/'metrics.json').read_text())['test'] is None
     assert training.train_run(root,'E0/42',owner_token='fixture')==lock
+    from geobench import evaluation
+    def predict_cpu(model,loader):
+        model.eval()
+        with torch.inference_mode(): return torch.cat([model(images) for images,labels in loader])
+    monkeypatch.setattr(evaluation,'_predict',predict_cpu)
+    evaluation_lock=evaluation.evaluate_run(root,'E0/42',owner_token='fixture')
+    assert verify_lock(evaluation_lock,boundary=root)['files']['metrics.json']
+    assert json.loads((run/'metrics.json').read_text())['test'] is not None
+    assert evaluation.evaluate_run(root,'E0/42',owner_token='fixture')==evaluation_lock
     e1=locked('pools/E1','e1',{'manifest.csv':b'image_id\n'},
               {data['path']:data['sha256'],pool['path']:pool['sha256']},'pool_lock.json')
     locked('specs/E1E2','spec:E1E2',{'spec.json':b'{}'})
@@ -110,7 +121,7 @@ def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path,
                {runtime['path']:runtime['sha256']})
     for strength in (.25,.35,.5):
         locked(f'pools/E1E2/candidates/strength_{strength}',f'candidate-pool:{strength}',
-               {'manifest.csv':table([{**entry,'sample_type':'real'}])},
+               {'manifest.csv':table([{**entry,'sample_type':'real'}]),'pool.json':b'{}'},
                {data['path']:data['sha256'],pool['path']:pool['sha256'],e1['path']:e1['sha256']},'pool_lock.json')
     from geobench.tuning import prepare_tuning
     protocol=prepare_tuning(root,owner_token='fixture')
@@ -128,6 +139,15 @@ def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path,
     assert training.train_tuning(root,.25,42,owner_token='fixture')==root/references[0]['path']
     from geobench.selection import select_strength_from_locks
     assert select_strength_from_locks(root,references)['strength']==.25
+    from geobench.selection import publish_strength_selection
+    from geobench.bindings import freeze_selected_pool,prepare_run,bind_selected_runs
+    publish_strength_selection(root,references,owner_token='fixture')
+    official_pool=freeze_selected_pool(root,owner_token='fixture')
+    assert verify_lock(official_pool,boundary=root)['identity']=='pool:E1E2'
+    for seed in (42,123,2026): prepare_run(root,f'E1E2/{seed}',owner_token='fixture')
+    bindings=bind_selected_runs(root,owner_token='fixture')
+    assert len(verify_lock(bindings,boundary=root)['files'])==3
+    evaluation.evaluate_run(root,'E1E2/42',owner_token='fixture')
     (run/'descriptor.json').write_text((run/'descriptor.json').read_text()+' ')
     with pytest.raises(ValueError,match='identity'):
         training.train_run(root,'E0/42',owner_token='fixture')

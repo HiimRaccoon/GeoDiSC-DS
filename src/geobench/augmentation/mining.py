@@ -2,6 +2,12 @@
 import torch
 
 
+def probe_gpu(root):
+    import os
+    from ..probes import run_probe
+    return run_probe(root,'dino',owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN'))
+
+
 def mine_confusers(features, labels):
     features = torch.as_tensor(features, dtype=torch.float32)
     labels = torch.as_tensor(labels)
@@ -43,6 +49,16 @@ def _load_dino(snapshot):
     model=AutoModel.from_pretrained(str(snapshot),local_files_only=True,torch_dtype=torch.float32).to('cuda').eval()
     model.requires_grad_(False)
     return model,processor,'cuda'
+
+
+def extract_cls(model,processor,images,device):
+    if torch.is_autocast_enabled('cuda') or torch.is_autocast_enabled('cpu'):raise ValueError('DINO requires autocast OFF')
+    inputs=processor(images=images,return_tensors='pt')
+    pixels=inputs['pixel_values'].to(device=device,dtype=torch.float32)
+    output=model(pixel_values=pixels).last_hidden_state[:,0,:]
+    if output.shape!=(len(images),768) or output.dtype!=torch.float32 or not torch.isfinite(output).all():
+        raise ValueError('invalid DINO CLS output')
+    return output
 
 
 def extract_and_mine(root, *, model_lock, owner_token):
@@ -100,11 +116,7 @@ def extract_and_mine(root, *, model_lock, owner_token):
                     if sha256_file(path)!=row['sha256'] or decoded_pixel_sha256(path)!=row['decoded_pixel_sha256']:
                         raise ValueError('reference image content mismatch')
                     images.append(decode(path))
-                inputs=processor(images=images,return_tensors='pt')
-                pixels=inputs['pixel_values'].to(device=device,dtype=torch.float32)
-                output=model(pixel_values=pixels).last_hidden_state[:,0,:]
-                if output.shape != (len(images),768) or output.dtype!=torch.float32 or not torch.isfinite(output).all():
-                    raise ValueError('invalid DINO CLS output')
+                output=extract_cls(model,processor,images,device)
                 features.append(output.cpu())
         result=mine_confusers(torch.cat(features),[int(r['class_id']) for r in rows])
         value=hashlib.sha256(('features\0'+owner_token).encode()).hexdigest()

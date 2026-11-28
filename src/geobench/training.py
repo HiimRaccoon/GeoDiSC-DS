@@ -50,6 +50,35 @@ def _atomic_checkpoint(path, data):
     os.replace(temp,path)
 
 
+def build_optimizer(model):
+    import torch
+    return torch.optim.AdamW(model.parameters(),lr=3e-4,weight_decay=1e-4,betas=(.9,.999),eps=1e-8,
+        amsgrad=False,maximize=False,foreach=False,fused=False,capturable=False,differentiable=False)
+
+
+def classifier_update(model,optimizer,images,labels):
+    import torch
+    optimizer.zero_grad(set_to_none=True)
+    logits=model(images)
+    loss=torch.nn.functional.cross_entropy(logits,labels,reduction='mean',label_smoothing=0.0)
+    if not torch.isfinite(loss): raise ValueError('nonfinite training loss')
+    loss.backward();optimizer.step()
+    return loss.detach()
+
+
+def _cpu_snapshot(value):
+    import copy
+    import torch
+    if isinstance(value,torch.Tensor):return value.detach().cpu().clone()
+    if isinstance(value,dict):
+        result=copy.copy(value)
+        for key,item in value.items():result[key]=_cpu_snapshot(item)
+        return result
+    if isinstance(value,list):return [_cpu_snapshot(item) for item in value]
+    if isinstance(value,tuple):return tuple(_cpu_snapshot(item) for item in value)
+    return value
+
+
 def train_epochs(model, train_loader, validation_loader, groups, loader_generator, checkpoint_dir, *, identity, device='cpu', on_epoch=None, mixup_seed=None):
     """Require the confirmed loader contract before entering the training core."""
     from torch.utils.data import RandomSampler, SequentialSampler
@@ -83,17 +112,16 @@ def _train_epochs(model, train_loader, validation_loader, groups, loader_generat
     root=Path(checkpoint_dir); root.mkdir(parents=True,exist_ok=True)
     path=root/'last_checkpoint.pt'
     model=model.to(device=device,dtype=torch.float32)
-    optimizer=torch.optim.AdamW(model.parameters(),lr=3e-4,weight_decay=1e-4,betas=(.9,.999),eps=1e-8,
-                                amsgrad=False,maximize=False,foreach=False,fused=False,capturable=False,differentiable=False)
+    optimizer=build_optimizer(model)
     if mixup_seed is not None and (type(mixup_seed) is not int or mixup_seed not in (42,123,2026) or not hasattr(train_loader.dataset, 'real_pool')):
         raise ValueError('invalid Mixup seed or dataset')
-    state={'schema_version':2,'identity':identity,'completed_epoch':0,'global_step':0,'steps_per_epoch':count,'best_score':None,
-           'best_epoch':None,'best_state':None,'best_metrics':None,'history':[],'lr_history':[], 'mixup_seed':mixup_seed, 'mixup_history':[]}
+    state={'schema_version':3,'identity':identity,'completed_epoch':0,'global_step':0,'steps_per_epoch':count,'best_score':None,
+           'best_epoch':None,'best_state':None,'best_snapshot':None,'best_metrics':None,'history':[],'lr_history':[], 'mixup_seed':mixup_seed, 'mixup_history':[]}
     if path.exists():
         if path.is_symlink():
             raise ValueError('checkpoint path cannot be a symlink')
         saved=torch.load(path,map_location='cpu',weights_only=True)
-        if saved.get('schema_version') != 2 or type(saved.get('schema_version')) is not int:
+        if saved.get('schema_version') != 3 or type(saved.get('schema_version')) is not int:
             raise ValueError('unsupported checkpoint schema')
         if not set(state).union({'model','optimizer','rng'}).issubset(saved):
             raise ValueError('incomplete checkpoint schema')
@@ -111,8 +139,7 @@ def _train_epochs(model, train_loader, validation_loader, groups, loader_generat
         state={key:saved[key] for key in state}
         _restore_rng(saved['rng'],loader_generator)
         if state['best_state'] is not None:
-            _atomic_checkpoint(root/'best_checkpoint.pt', {'identity':identity,'epoch':state['best_epoch'],
-                                                            'score':state['best_score'],'model':state['best_state']})
+            _atomic_checkpoint(root/'best_checkpoint.pt', state['best_snapshot'])
     for epoch in range(state['completed_epoch']+1,21):
         model.train(); examples=0; loss_total=0.0; steps=0
         if mixup_seed is not None:
@@ -137,11 +164,7 @@ def _train_epochs(model, train_loader, validation_loader, groups, loader_generat
             if not len(labels): raise ValueError('empty batch')
             rate=learning_rate(state['global_step'],count)
             for group in optimizer.param_groups: group['lr']=rate
-            optimizer.zero_grad(set_to_none=True)
-            logits=model(images)
-            loss=torch.nn.functional.cross_entropy(logits,labels,reduction='mean',label_smoothing=0.0)
-            if not torch.isfinite(loss): raise ValueError('nonfinite training loss')
-            loss.backward(); optimizer.step()
+            loss=classifier_update(model,optimizer,images,labels)
             state['lr_history'].append({'step':state['global_step'],'epoch':epoch,'step_in_epoch':steps,'lr':rate})
             state['global_step']+=1; steps+=1; examples+=len(labels); loss_total+=float(loss.detach())*len(labels)
         if steps != count or examples == 0:
@@ -161,7 +184,8 @@ def _train_epochs(model, train_loader, validation_loader, groups, loader_generat
         finally:
             _restore_rng(rng,loader_generator)
         score=metrics['macro_f1']
-        if state['best_score'] is None or score > state['best_score']:
+        improved=state['best_score'] is None or score > state['best_score']
+        if improved:
             state['best_score']=score; state['best_epoch']=epoch
             state['best_state']=copy.deepcopy(model.state_dict())
             state['best_metrics']=metrics
@@ -172,10 +196,13 @@ def _train_epochs(model, train_loader, validation_loader, groups, loader_generat
         if mixup_seed is not None:
             state['mixup_history'].append({'epoch':epoch,'selected_batches':sorted(selected),'batches':mixup_records})
         state['completed_epoch']=epoch
+        if improved:
+            state['best_snapshot']=_cpu_snapshot({**{key:value for key,value in state.items() if key not in ('best_snapshot','best_state')},
+                'epoch':state['best_epoch'],'score':state['best_score'],'model':model.state_dict(),
+                'optimizer':optimizer.state_dict(),'rng':_rng_state(loader_generator)})
         checkpoint={**state,'model':model.state_dict(),'optimizer':optimizer.state_dict(),'rng':_rng_state(loader_generator)}
         _atomic_checkpoint(path,checkpoint)
-        _atomic_checkpoint(root/'best_checkpoint.pt', {'identity':identity,'epoch':state['best_epoch'],
-                                                       'score':state['best_score'],'model':state['best_state']})
+        _atomic_checkpoint(root/'best_checkpoint.pt',state['best_snapshot'])
         if on_epoch is not None: on_epoch(epoch)
     return state
 
@@ -254,6 +281,11 @@ def _train_run(root, run_id, *, owner_token, tuning=None):
     dependencies = {item['path']:item['sha256'] for item in descriptor['dependencies'].values()}
     if tuning is not None:
         dependencies['tuning/E2/lock.json']=sha256_file(root/'tuning/E2/lock.json')
+    elif condition=='E1E2':
+        if (root/'runs/E1E2/lock.json').exists():raise ValueError('official E1E2 triplet already bound; do not retrain')
+        fresh=root/'runs/E1E2/plan/lock.json';plan=verify_lock(fresh,boundary=root)
+        if plan['identity']!='fresh-triplet:E1E2':raise ValueError('fresh three-seed plan required')
+        dependencies[fresh.relative_to(root).as_posix()]=sha256_file(fresh)
     dependencies[readiness_path.relative_to(root).as_posix()] = sha256_file(readiness_path)
     existing = target/'checkpoint_lock.json'
     if existing.exists():
@@ -273,7 +305,7 @@ def _train_run(root, run_id, *, owner_token, tuning=None):
         raise ValueError('class groups not locked')
     with (data_path.parent/'class_groups.csv').open(encoding='utf-8',newline='') as stream:
         group_rows=list(csv.DictReader(stream))
-    groups = {}
+    groups = {'head':[],'medium':[],'extreme-tail':[]}
     for row in group_rows:
         groups.setdefault(row['group'],[]).append(int(row['class_id']))
     train_data, val_data = load_locked_datasets(root,dataset_root,data_path,pool_path,mixup=condition=='E3-A4')
@@ -314,13 +346,23 @@ def _train_run(root, run_id, *, owner_token, tuning=None):
             finalizing = (stage/'run_metadata.json').exists()
             if not finalizing:
                 event('resume' if (stage/'last_checkpoint.pt').exists() else 'start')
+            import signal
+            stop_requested=[];previous_handlers={}
+            def request_stop(signum,frame):stop_requested.append(signum)
+            def completed_epoch(epoch):
+                if stop_requested:raise InterruptedError('scheduler interruption after completed epoch')
+            for name in ('SIGUSR1','SIGTERM'):
+                if hasattr(signal,name):
+                    signum=getattr(signal,name);previous_handlers[signum]=signal.signal(signum,request_stop)
             try:
                 state = train_epochs(model,train_loader,val_loader,groups,generator,stage,identity=identity,device='cuda',
-                                     mixup_seed=seed if condition=='E3-A4' else None)
+                                     mixup_seed=seed if condition=='E3-A4' else None,on_epoch=completed_epoch)
             except BaseException as exc:
                 if not finalizing:
                     event('failure',error_type=type(exc).__name__)
                 raise
+            finally:
+                for signum,handler in previous_handlers.items():signal.signal(signum,handler)
             if state['completed_epoch'] != 20 or state['global_step'] != 20*state['steps_per_epoch'] or len(state['history']) != 20:
                 raise ValueError('training run incomplete')
             if descriptor_path is not None and sha256_file(descriptor_path) != descriptor_hash:
@@ -346,12 +388,13 @@ def _train_run(root, run_id, *, owner_token, tuning=None):
                 complete_temporary(stage/name,output.getvalue().encode('utf-8'))
             write_csv('history.csv',state['history'])
             write_csv('lr_steps.csv',state['lr_history'])
-            write_json('metrics.json',{'validation':state['best_metrics'],'test':None})
+            write_json('training_metrics.json',{'validation':state['best_metrics'],'test':None})
+            complete_temporary(target/'metrics.json',(stage/'training_metrics.json').read_bytes())
             best = state['history'][state['best_epoch']-1]
             write_json('validation_at_best.json',{'epoch':state['best_epoch'],'macro_f1':state['best_score'],
                 'tail_f1':best['tail_f1'],'checkpoint_sha256':sha256_file(stage/'best_checkpoint.pt')})
             files=['run_descriptor.json','best_checkpoint.pt','last_checkpoint.pt','history.json','validation_at_best.json',
-                   'config.yaml','run_metadata.json','history.csv','lr_steps.csv','metrics.json']
+                   'config.yaml','run_metadata.json','history.csv','lr_steps.csv','training_metrics.json']
             if condition == 'E3-A4':
                 write_json('mixup_history.json',state['mixup_history']); files.append('mixup_history.json')
             return publish_lock(target,{'identity':identity,'files':files,'dependencies':dependencies,'artifact_root':root,

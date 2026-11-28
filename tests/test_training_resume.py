@@ -30,6 +30,10 @@ def test_epoch_boundary_resume_matches_uninterrupted(tmp_path):
     resumed=train_epochs(c,train,val,{'tail':[0,1]},generator,tmp_path/'resume',identity='run-42')
     assert result['history']==resumed['history'] and result['global_step']==40
     assert (tmp_path/'resume/best_checkpoint.pt').is_file()
+    frozen_best=torch.load(tmp_path/'resume/best_checkpoint.pt',weights_only=True)
+    assert len(frozen_best['history'])==frozen_best['epoch']
+    assert frozen_best['global_step']==frozen_best['epoch']*2
+    assert all(value.device.type=='cpu' for value in frozen_best['model'].values())
     for left,right in zip(a.parameters(),c.parameters()): assert torch.equal(left,right)
     assert resumed['best_epoch'] == min(item['epoch'] for item in resumed['history'] if item['macro_f1']==max(x['macro_f1'] for x in resumed['history']))
 
@@ -91,7 +95,9 @@ def test_checkpoint_has_version_and_rejects_unrecognized_schema(tmp_path):
         train_epochs(model,train,val,{'tail':[0,1]},generator,tmp_path,identity='fixture',on_epoch=interrupt)
     path=tmp_path/'last_checkpoint.pt'
     checkpoint=torch.load(path,weights_only=True)
-    assert checkpoint['schema_version']==2
+    assert checkpoint['schema_version']==3
+    best=torch.load(tmp_path/'best_checkpoint.pt',weights_only=True)
+    assert best['schema_version']==3 and {'optimizer','rng','global_step','mixup_history','history'}<=set(best)
     checkpoint['schema_version']=1
     torch.save(checkpoint,path)
     with pytest.raises(ValueError,match='schema'):

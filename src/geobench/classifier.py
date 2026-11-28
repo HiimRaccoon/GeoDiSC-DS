@@ -1,5 +1,11 @@
 ﻿"""Shared EfficientNet-B0 construction from verified local weights."""
 import torch
+
+
+def probe_gpu(root):
+    import os
+    from .probes import run_probe
+    return run_probe(root,'classifier',owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN'))
 from torch import nn
 from .artifacts import sha256_file
 

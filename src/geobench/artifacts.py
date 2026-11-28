@@ -17,6 +17,25 @@ AUTHORITATIVE_LOCK_NAMES = frozenset({
 })
 
 
+def publish_records(root, relative, identity, contents, dependencies, *, owner_token, lock_name='lock.json'):
+    """Publish an immutable bundle of already computed output bytes."""
+    if not isinstance(owner_token,str) or not owner_token:
+        raise ValueError('owner token required')
+    root=Path(root).resolve(); target=_inside(root,relative)
+    value=hashlib.sha256((identity+'\0'+owner_token).encode()).hexdigest()
+    with active_writer(target):
+        token=claim_writer(target,identity,token=value,resume=(target/'.writer').exists())
+        try:
+            stage=staging_path(target,token)
+            for name,content in contents.items():
+                path=_inside(stage,name); path.parent.mkdir(parents=True,exist_ok=True)
+                complete_temporary(path,content)
+            return publish_lock(target,{'identity':identity,'files':list(contents),'dependencies':dependencies,
+                'artifact_root':root,'claim':token,'lock_name':lock_name})
+        finally:
+            token.close()
+
+
 def _complete_stream(path, source):
     """Complete only a matching prefix of a private, owner-controlled write."""
     path = Path(path)
@@ -158,15 +177,30 @@ def _claim_writer(root, identity, *, token=None, resume=False):
     root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     claim = root / '.writer'
+    intent = root / '.writer.intent'
+    if claim.exists() and not resume:raise FileExistsError('writer claim already exists')
+    if intent.exists():
+        if not isinstance(token,str) or not token:raise ValueError('owner token required for interrupted claim')
+        expected=json.dumps({'identity':identity,'token_sha256':hashlib.sha256(token.encode()).hexdigest()},sort_keys=True).encode()
+        complete_temporary(intent,expected)
+        if claim.is_symlink() or (root/'.staging').is_symlink():raise ValueError('linked writer initialization')
+        claim.mkdir(exist_ok=True)
+        if set(p.name for p in claim.iterdir())-{'claim.json'}:raise ValueError('unexpected writer initialization contents')
+        complete_temporary(claim/'claim.json',expected)
+        (root/'.staging').mkdir(exist_ok=True)
+        return token
     if resume:
         if _ownership(root, token) != identity:
             raise ValueError('writer identity mismatch')
-        if not (root / '.staging').is_dir():
-            raise ValueError('incomplete writer claim')
+        if (root/'.staging').is_symlink():raise ValueError('linked staging directory')
+        (root / '.staging').mkdir(exist_ok=True)
         return token
     token = secrets.token_hex(32) if token is None else token
     if not isinstance(token, str) or not token:
         raise ValueError('writer token required')
+    if claim.exists():raise FileExistsError('writer claim already exists')
+    expected=json.dumps({'identity':identity,'token_sha256':hashlib.sha256(token.encode()).hexdigest()},sort_keys=True).encode()
+    complete_temporary(intent,expected)
     claim.mkdir()
     with (claim / 'claim.json').open('x', encoding='utf-8') as stream:
         json.dump({'identity': identity, 'token_sha256': hashlib.sha256(token.encode()).hexdigest()}, stream, sort_keys=True)
@@ -183,21 +217,22 @@ def staging_path(root, token):
     return Path(root).resolve() / '.staging'
 
 
-def verify_lock(path, boundary=None, _seen=None):
+def verify_lock(path, boundary=None, _seen=None, _verified=None):
     path = Path(path)
     if path.is_symlink() or path.resolve().name not in AUTHORITATIVE_LOCK_NAMES or any(part.startswith('.') for part in path.resolve().parts):
         raise ValueError('not an authoritative published lock target')
     if path.name not in AUTHORITATIVE_LOCK_NAMES or any(part.startswith(".") for part in path.parts):
         raise ValueError("not an authoritative published lock")
-    return _validate_lock(path, boundary=boundary, _seen=_seen)
+    return _validate_lock(path, boundary=boundary, _seen=_seen, _verified=_verified)
 
 
-def _validate_lock(path, boundary=None, _seen=None):
+def _validate_lock(path, boundary=None, _seen=None, _verified=None):
     path = Path(path).resolve()
     boundary = Path(boundary).resolve() if boundary is not None else path.parent
     if not path.is_relative_to(boundary):
         raise ValueError('lock escapes trusted root')
     seen = set() if _seen is None else _seen
+    verified = {} if _verified is None else _verified
     if path in seen:
         raise ValueError('cyclic lock dependency')
     seen.add(path)
@@ -219,11 +254,16 @@ def _validate_lock(path, boundary=None, _seen=None):
                 raise ValueError('reserved output path')
             if sha256_file(_inside(path.parent, name)) != digest:
                 raise ValueError('artifact hash mismatch')
+        if path in verified:
+            if verified[path] != data:
+                raise ValueError('lock changed during verification')
+            return data
         for name, digest in data['dependencies'].items():
             dep = _inside(artifact_root, name)
             if sha256_file(dep) != digest:
                 raise ValueError('dependency hash mismatch')
-            verify_lock(dep, boundary=boundary, _seen=seen)
+            verify_lock(dep, boundary=boundary, _seen=seen, _verified=verified)
+        verified[path] = data
         return data
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError('invalid or missing artifact') from exc

@@ -1,5 +1,11 @@
 """Shared native-resolution SD1.5 img2img inference primitives."""
 import torch
+
+
+def probe_gpu(root):
+    import os
+    from ..probes import run_probe
+    return run_probe(root,'diffusion',owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN'))
 from ..images import pad_native, crop_native
 from .quality import TechnicalRejection
 
@@ -90,9 +96,16 @@ def generate_image(image, country, strength, *, vae, unet, tokenizer, text_encod
                 predicted = unconditioned + 2.0 * (conditioned - unconditioned)
             else:
                 from .guidance import predict_step
-                predicted, diagnostic = predict_step({'unet':unet, 'latent':model_input, 'timestep':timestep,
-                    'index':index, 'count':len(timesteps), 'positive':positive, 'confuser':confuser,
-                    'baseline':baseline, 'role':role, 'class_id':class_id, 'slot':slot, 'attempt':attempt, 'variant':variant})
+                try:
+                    predicted, diagnostic = predict_step({'unet':unet, 'latent':model_input, 'timestep':timestep,
+                        'index':index, 'count':len(timesteps), 'positive':positive, 'confuser':confuser,
+                        'baseline':baseline, 'role':role, 'class_id':class_id, 'slot':slot, 'attempt':attempt, 'variant':variant})
+                except TechnicalRejection as exc:
+                    exc.guidance=guidance+[{'step':index,'N':len(timesteps),'t_sched':int(timestep),'status':'rejected',
+                        'reason':str(exc),'gamma':None,'d_pos':None,'d_neg':None,'w_pos':None,'w_neg':None}]
+                    raise
+                diagnostic.update({'step':index,'N':len(timesteps),'t_sched':int(timestep),'scheduler_update_index':index,
+                                   'status':'valid','reason':None})
                 guidance.append(diagnostic)
             if not torch.isfinite(predicted).all():
                 raise TechnicalRejection('nonfinite_diffusion_prediction')
@@ -111,6 +124,11 @@ def _load_runtime(snapshot):
     import os
     if not os.environ.get('SLURM_JOB_ID') or not torch.cuda.is_available():
         raise ValueError('actual diffusion generation requires a Slurm CUDA allocation')
+    torch.use_deterministic_algorithms(True)
+    torch.backends.cuda.matmul.allow_tf32=False
+    torch.backends.cudnn.allow_tf32=False
+    torch.backends.cudnn.benchmark=False
+    torch.backends.cudnn.deterministic=True
     from diffusers import StableDiffusionImg2ImgPipeline
     pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
         str(snapshot), local_files_only=True, torch_dtype=torch.float32, safety_checker=None)
@@ -260,7 +278,8 @@ def generate_pool(root, descriptor, *, owner_token, _e3=None):
                                 raise ValueError('candidate history identity mismatch')
                             status, reason = prior.get('status'), prior.get('reason')
                             technical = {'invalid_vae_latents','invalid_vae_output','nonfinite_diffusion_prediction',
-                                         'nonfinite_pixels','geometry_mismatch','pixel_range'}
+                                         'nonfinite_pixels','geometry_mismatch','pixel_range','nonfinite_condition','invalid_condition_std',
+                                         'nonfinite_rescaled_condition','nonfinite_guidance_distance','nonfinite_guidance_output','nonfinite_guidance_result'}
                             if status == 'rejected' and reason in technical and 'output_id' not in prior:
                                 record(prior)
                                 continue
@@ -301,7 +320,7 @@ def generate_pool(root, descriptor, *, owner_token, _e3=None):
                                 'confuser_country':_e3['confusers'].get(str(class_id))}
                             candidate,provenance=generate_image(image,group['class_name'],strength,**runtime,vae_seed=vae_seed,latent_seed=latent_seed,**kwargs)
                         except TechnicalRejection as exc:
-                            record({**job,'status':'rejected','reason':str(exc)})
+                            record({**job,'status':'rejected','reason':str(exc),**({'provenance':{'guidance':exc.guidance}} if hasattr(exc,'guidance') else {})})
                             continue
                         failure=validate_candidate_tensor(candidate,image.size)
                         if failure:

@@ -86,7 +86,12 @@ def inspect_deployment(root, profile, *, owner_token):
               'python': platform.python_version(), 'configuration_sha256': config['sha256'],
               'profile_resolved': resolved is not None,
               'environment': inspect_environment(['torch', 'torchvision', 'diffusers', 'transformers', 'numpy', 'Pillow'])}
+    root.mkdir(parents=True,exist_ok=True)
+    result['storage']=inspect_storage(root)
+    import hashlib
+    version=hashlib.sha256(json.dumps(result,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
     target = root / 'deployment' / 'preflight'
+    if (target/'lock.json').exists():target=target/'inspections'/version
     token = claim_writer(target, 'deployment-preflight', token=owner_token, resume=(target/'.writer').exists())
     try:
         path = staging_path(target, token) / 'preflight.json'
@@ -95,6 +100,34 @@ def inspect_deployment(root, profile, *, owner_token):
         return publish_lock(target, {'identity': 'deployment-preflight', 'files': ['preflight.json'], 'dependencies': dependencies, 'artifact_root': root, 'claim': token})
     finally:
         token.close()
+
+
+def inspect_site(root,*,owner_token):
+    """Collect read-only SSH observations using a separately verified private site."""
+    import hashlib,json,shlex,subprocess
+    from pathlib import Path
+    from .data import _private_site
+    from .artifacts import publish_records,sha256_file
+    if not isinstance(owner_token,str) or not owner_token:raise ValueError('owner token required')
+    root=Path(root).resolve();site,path=_private_site(root)
+    target=site['ssh_target'];workspace=site['workspace']
+    match=re.fullmatch(r'([A-Za-z0-9_.@-]+)(?::([0-9]+))?',target)
+    if match is None or target.startswith('-'):
+        raise ValueError('invalid private SSH target')
+    host,port=match.groups()
+    if port is not None and not 1<=int(port)<=65535:raise ValueError('invalid private SSH port')
+    commands={'login_identity':'id -un','login_host':'hostname -f','workspace_storage':'df -Pk '+shlex.quote(workspace),
+              'workspace_access':'test -d '+shlex.quote(workspace)+' && test -r '+shlex.quote(workspace)}
+    observations={}
+    for name,command in commands.items():
+        argv=['ssh','-o','BatchMode=yes',*(['-p',port] if port is not None else []),host,command]
+        result=subprocess.run(argv,text=True,capture_output=True,timeout=60,check=False)
+        observations[name]={'exit_code':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
+    record={'status':'observed','observations':observations,'site_sha256':sha256_file(path)}
+    content=(json.dumps(record,sort_keys=True,separators=(',', ':'))+'\n').encode()
+    version=hashlib.sha256(content).hexdigest()
+    return publish_records(root,f'deployment/inspections/site/{version}','site-inspection',{'inspection.json':content},
+        {path.relative_to(root).as_posix():sha256_file(path)},owner_token=owner_token)
 
 
 def probe_gpu(root, role):
@@ -171,6 +204,20 @@ ROLE_REQUIREMENTS = {
     'dino': {'V01','V02','V03','V04','V06','V10','V13'},
 }
 
+CONFORMANCE_CHECKS = {
+    'V01':{'private_site_matches','dataset_path_verified','separate_code_checkout'},
+    'V02':{'quota_bytes_inodes_verified','compute_visibility','atomic_publication','exclusive_ownership'},
+    'V03':{'account_partition_qos_verified','maximum_walltime_verified','array_limits_verified','cpu_memory_verified'},
+    'V04':{'inventory_49997_124','decoder_locked','file_pixel_hashes_verified','duplicates_split_supports_verified'},
+    'V05':{'environment_exports_locked','cuda_driver_compatible','determinism_verified','base_model_snapshots_verified'},
+    'V06':{'pinned_dinov3_weights_verified','official_processor_verified','processor_shape_verified'},
+    'V07_base':{'all_base_prompts_audited','special_tokens_included','no_overflow','no_truncation'},
+    'V08':{'shared_sampler_used','native_geometry_verified','strength_grid_verified','three_branches_verified','profile_fits'},
+    'V09':{'shared_trainer_used','batch128_fp32_backward_update','loader_verified','a4_path_verified','pristine_state_reloaded','profile_fits'},
+    'V10':{'shared_extractor_used','batch32_and_partial_verified','official_processor_used','fp32_frozen_cls','profile_fits'},
+    'V13':{'compute_smoke_passed','signal_forwarding_verified','requeue_policy_verified','epoch_resume_verified','checkpoint_grace_measured'},
+}
+
 
 def assess_readiness(root, evidence):
     """Verify explicit locked evidence; absent observations remain pending."""
@@ -205,8 +252,23 @@ def assess_readiness(root, evidence):
                 raise ValueError('verification record incomplete')
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError('invalid verification record') from exc
-        # A generic locked record proves integrity, not role-specific conformance.
         checks[name] = 'evidence_present'
+        # Operator-reviewed, scoped observations must accompany the raw evidence.
+        conformance=record.get('conformance')
+        if (isinstance(conformance,dict) and set(conformance)==CONFORMANCE_CHECKS[name]
+                and all(value is True for value in conformance.values())):
+            if name in {'V08','V09','V10'}:
+                role={'V08':'diffusion','V09':'classifier','V10':'dino'}[name]
+                probe_path=record.get('probe_lock')
+                if not isinstance(probe_path,str) or probe_path not in lock['dependencies']:
+                    raise ValueError('shared probe dependency required')
+                probe=verify_lock(_inside(root,probe_path),boundary=root)
+                if probe['identity']!=f'probe:{role}' or 'probe.json' not in probe['files']:raise ValueError('probe role mismatch')
+                observation=json.loads((_inside(root,probe_path).parent/'probe.json').read_text(encoding='utf-8'))
+                if (observation.get('role')!=role or observation.get('state_discarded') is not True
+                        or not observation.get('job_id') or observation.get('max_memory_bytes',0)<=0 or observation.get('seconds',0)<=0):
+                    raise ValueError('invalid measured probe evidence')
+            checks[name] = 'verified'
     return {'checks': checks, 'roles': {role: all(checks[key] == 'verified' for key in requirements)
                                       for role, requirements in ROLE_REQUIREMENTS.items()}}
 

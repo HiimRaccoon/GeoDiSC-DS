@@ -84,6 +84,25 @@ def test_dino_snapshot_rejects_wrong_checkpoint(tmp_path):
     with pytest.raises(ValueError): verify_model_snapshot(tmp_path,'dino',descriptor)
 
 
+def test_scoped_conformance_receipts_open_only_verified_role(tmp_path):
+    from geobench.preflight import CONFORMANCE_CHECKS,ROLE_REQUIREMENTS,assess_readiness
+    from geobench.artifacts import publish_records,sha256_file
+    evidence={}
+    for name in ROLE_REQUIREMENTS['classifier']:
+        dependencies={}
+        record={'status':'verified','verification':name,'evidence_files':['observations.txt'],
+                'conformance':dict.fromkeys(CONFORMANCE_CHECKS[name],True)}
+        if name=='V09':
+            probe=publish_records(tmp_path,'probe','probe:classifier',{'probe.json':json.dumps({'role':'classifier',
+                'state_discarded':True,'job_id':'fixture','max_memory_bytes':1024,'seconds':1}).encode()},{},owner_token='fixture')
+            record['probe_lock']='probe/lock.json';dependencies['probe/lock.json']=sha256_file(probe)
+        path=publish_records(tmp_path,f'evidence/{name}',name,{'evidence.json':json.dumps(record).encode(),
+                'observations.txt':b'fixture operator observations'},dependencies,owner_token='fixture')
+        evidence[name]={'path':path.relative_to(tmp_path).as_posix(),'sha256':sha256_file(path)}
+    result=assess_readiness(tmp_path,evidence)
+    assert result['roles']['classifier'] and not result['roles']['diffusion'] and not result['roles']['dino']
+
+
 def test_preflight_cli_is_available_and_requires_owner(tmp_path, monkeypatch):
     from geobench.cli import main
     monkeypatch.delenv('GEOBENCH_OWNER_TOKEN', raising=False)

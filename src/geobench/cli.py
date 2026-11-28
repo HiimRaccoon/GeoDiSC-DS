@@ -46,6 +46,31 @@ def main(argv=None):
     mining = commands.add_parser('mine-confusers')
     mining.add_argument('--root',required=True,type=Path)
     mining.add_argument('--model-lock',required=True)
+    probe=commands.add_parser('probe-gpu');probe.add_argument('--root',required=True,type=Path)
+    probe.add_argument('--role',required=True,choices=('classifier','diffusion','dino'))
+    specs=commands.add_parser('freeze-specs');specs.add_argument('--root',required=True,type=Path)
+    fresh=commands.add_parser('plan-fresh-e1e2');fresh.add_argument('--root',required=True,type=Path);fresh.add_argument('--reason',required=True)
+    materialize=commands.add_parser('stage-model');materialize.add_argument('--root',required=True,type=Path)
+    materialize.add_argument('--role',required=True,choices=('classifier','diffusion','dino'))
+    materialize.add_argument('--snapshot',required=True,type=Path);materialize.add_argument('--descriptor',required=True,type=Path)
+    materialize.add_argument('--cache-root',type=Path)
+    runtime=commands.add_parser('freeze-runtime');runtime.add_argument('--root',required=True,type=Path)
+    site=commands.add_parser('inspect-site');site.add_argument('--root',required=True,type=Path)
+    probe_input=commands.add_parser('prepare-probe');probe_input.add_argument('--root',required=True,type=Path)
+    probe_input.add_argument('--role',required=True,choices=('classifier','diffusion','dino'));probe_input.add_argument('--model-lock',required=True)
+    for name in ('prepare-run','evaluate'):
+        command=commands.add_parser(name);command.add_argument('--root',required=True,type=Path);command.add_argument('--run',required=True)
+    for name in ('freeze-selected-pool','bind-selected','report'):
+        command=commands.add_parser(name);command.add_argument('--root',required=True,type=Path)
+    array=commands.add_parser('freeze-array');array.add_argument('--root',required=True,type=Path)
+    array.add_argument('--name',required=True);array.add_argument('--tasks',required=True,type=Path)
+    execute=commands.add_parser('execute-job');execute.add_argument('--root',required=True,type=Path)
+    execute.add_argument('--manifest',required=True);execute.add_argument('--index',required=True,type=int)
+    submit=commands.add_parser('submit-array');submit.add_argument('--root',required=True,type=Path)
+    submit.add_argument('--manifest',required=True);submit.add_argument('--profile',required=True,type=Path)
+    submit.add_argument('--site-lock',required=True);submit.add_argument('--kind',choices=('cpu','gpu'),default='gpu')
+    submit.add_argument('--afterok',action='append',default=[]);submit.add_argument('--replacement')
+    submit.add_argument('--scientific-approved',action='store_true')
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
@@ -107,4 +132,55 @@ def main(argv=None):
     elif args.command == 'mine-confusers':
         from .augmentation.mining import extract_and_mine
         print(extract_and_mine(args.root,model_lock=args.model_lock,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'prepare-run':
+        from .bindings import prepare_run
+        print(prepare_run(args.root,args.run,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'freeze-specs':
+        from .bindings import freeze_specs
+        for path in freeze_specs(args.root,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')): print(path)
+    elif args.command == 'plan-fresh-e1e2':
+        from .bindings import plan_fresh_e1e2
+        print(plan_fresh_e1e2(args.root,args.reason,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'probe-gpu':
+        from .preflight import probe_gpu
+        print(probe_gpu(args.root,args.role))
+    elif args.command == 'prepare-probe':
+        from .deployment import prepare_probe
+        print(prepare_probe(args.root,args.role,args.model_lock,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'stage-model':
+        from .deployment import stage_model
+        from .config import _unique_pairs
+        descriptor=json.loads(args.descriptor.read_text(encoding='utf-8'),object_pairs_hook=_unique_pairs)
+        print(stage_model(args.root,args.role,args.snapshot,descriptor,cache_root=args.cache_root,
+                          owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'freeze-runtime':
+        from .deployment import freeze_runtime
+        print(freeze_runtime(args.root,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'inspect-site':
+        from .preflight import inspect_site
+        print(inspect_site(args.root,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'freeze-selected-pool':
+        from .bindings import freeze_selected_pool
+        print(freeze_selected_pool(args.root,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'bind-selected':
+        from .bindings import bind_selected_runs
+        print(bind_selected_runs(args.root,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'evaluate':
+        from .evaluation import evaluate_run
+        print(evaluate_run(args.root,args.run,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'report':
+        from .reporting import report
+        print(report(args.root,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'freeze-array':
+        from .slurm import freeze_array
+        print(freeze_array(args.root,args.name,json.loads(args.tasks.read_text(encoding='utf-8')),
+                           owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'execute-job':
+        from .slurm import execute_job
+        return execute_job(args.root,args.manifest,args.index)
+    elif args.command == 'submit-array':
+        from .slurm import submit_array
+        print(submit_array(args.root,args.manifest,json.loads(args.profile.read_text(encoding='utf-8')),
+            site_lock=args.site_lock,kind=args.kind,afterok=args.afterok,replacement=args.replacement,
+            scientific_approved=args.scientific_approved,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
     return 0
