@@ -82,3 +82,17 @@ def test_checkpoint_loading_is_weights_only(tmp_path, monkeypatch):
     monkeypatch.setattr(torch,'load',guarded)
     with pytest.raises(ValueError,match='identity'):
         train_epochs(model,train,val,{'tail':[0,1]},generator,tmp_path,identity='different')
+
+
+def test_checkpoint_has_version_and_rejects_unrecognized_schema(tmp_path):
+    model=torch.nn.Linear(2,124); train,val,generator=loaders()
+    def interrupt(epoch): raise RuntimeError('stop')
+    with pytest.raises(RuntimeError):
+        train_epochs(model,train,val,{'tail':[0,1]},generator,tmp_path,identity='fixture',on_epoch=interrupt)
+    path=tmp_path/'last_checkpoint.pt'
+    checkpoint=torch.load(path,weights_only=True)
+    assert checkpoint['schema_version']==1
+    checkpoint['schema_version']=2
+    torch.save(checkpoint,path)
+    with pytest.raises(ValueError,match='schema'):
+        train_epochs(model,train,val,{'tail':[0,1]},generator,tmp_path,identity='fixture')

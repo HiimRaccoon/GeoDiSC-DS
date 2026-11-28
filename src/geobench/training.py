@@ -85,12 +85,14 @@ def _train_epochs(model, train_loader, validation_loader, groups, loader_generat
     model=model.to(device=device,dtype=torch.float32)
     optimizer=torch.optim.AdamW(model.parameters(),lr=3e-4,weight_decay=1e-4,betas=(.9,.999),eps=1e-8,
                                 amsgrad=False,maximize=False,foreach=False,fused=False,capturable=False,differentiable=False)
-    state={'identity':identity,'completed_epoch':0,'global_step':0,'steps_per_epoch':count,'best_score':None,
+    state={'schema_version':1,'identity':identity,'completed_epoch':0,'global_step':0,'steps_per_epoch':count,'best_score':None,
            'best_epoch':None,'best_state':None,'history':[],'lr_history':[]}
     if path.exists():
         if path.is_symlink():
             raise ValueError('checkpoint path cannot be a symlink')
         saved=torch.load(path,map_location='cpu',weights_only=True)
+        if saved.get('schema_version') != 1 or type(saved.get('schema_version')) is not int:
+            raise ValueError('unsupported checkpoint schema')
         if saved['identity'] != identity or saved['steps_per_epoch'] != count:
             raise ValueError('checkpoint identity or schedule mismatch')
         if (type(saved['completed_epoch']) is not int or not 0 <= saved['completed_epoch'] <= 20
