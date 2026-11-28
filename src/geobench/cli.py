@@ -27,6 +27,9 @@ def main(argv=None):
     e2.add_argument('--descriptor', required=True, type=Path)
     initialize = commands.add_parser('initialize')
     initialize.add_argument('--root', required=True, type=Path)
+    train = commands.add_parser('train')
+    train.add_argument('--root', required=True, type=Path)
+    train.add_argument('--run', required=True)
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
@@ -58,4 +61,7 @@ def main(argv=None):
     elif args.command == 'initialize':
         from .classifier import create_initializations
         print(create_initializations(args.root, owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'train':
+        from .training import train_run
+        print(train_run(args.root,args.run,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
     return 0

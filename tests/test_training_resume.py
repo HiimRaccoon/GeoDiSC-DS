@@ -96,3 +96,38 @@ def test_checkpoint_has_version_and_rejects_unrecognized_schema(tmp_path):
     torch.save(checkpoint,path)
     with pytest.raises(ValueError,match='schema'):
         train_epochs(model,train,val,{'tail':[0,1]},generator,tmp_path,identity='fixture')
+
+
+def test_a4_training_mixes_anchor_metadata_before_normalization(tmp_path, monkeypatch):
+    from torch.utils.data import Dataset
+    import geobench.augmentation.mixup as mixing
+    class Anchors(Dataset):
+        def __len__(self): return 2
+        def __getitem__(self, index):
+            return {'images':torch.full((3,2,2), .25), 'labels':0, 'image_id':str(index),
+                    'sample_type':'final_synthetic', 'n_original':2, 'n_train':1}
+        def real_pool(self, labels):
+            return {0:{'images':torch.full((1,3,2,2),.75),'ids':['real']}}
+    class Network(torch.nn.Module):
+        def __init__(self):
+            super().__init__(); self.layer=torch.nn.Linear(12,124); self.seen=[]
+        def forward(self,x):
+            self.seen.append(x.detach().clone()); return self.layer(x.flatten(1))
+    generator=torch.Generator().manual_seed(42)
+    train=DataLoader(Anchors(),batch_size=1,shuffle=True,generator=generator)
+    validation=DataLoader(TensorDataset(torch.zeros(1,3,2,2),torch.tensor([0])),batch_size=1)
+    calls=[]; original=mixing.mix_batch
+    def checked(batch, context):
+        assert torch.all(batch['images']==.25) and len(batch['image_id'])==1
+        result, evidence=original(batch,context); calls.append(evidence); return result,evidence
+    monkeypatch.setattr(mixing,'mix_batch',checked)
+    model=Network()
+    def interrupt(epoch): raise RuntimeError('stop')
+    with pytest.raises(RuntimeError,match='stop'):
+        train_epochs(model,train,validation,{'tail':[0]},generator,tmp_path,identity='a4',on_epoch=interrupt,mixup_seed=42)
+    assert len(calls)==2 and sum(item['selected'] for item in calls)==1
+    assert sum(item['mixed_count'] for item in calls)==1
+    assert not torch.all(model.seen[0]==.25)
+    saved=torch.load(tmp_path/'last_checkpoint.pt',weights_only=True)
+    assert saved['mixup_seed']==42 and len(saved['mixup_history'])==1
+    assert saved['mixup_history'][0]['selected_batches']==[i for i, event in enumerate(calls) if event['selected']]

@@ -108,3 +108,18 @@ def test_hybrid_pool_cannot_change_real_membership(tmp_path):
                         'claim': token, 'lock_name': 'pool_lock.json'})
     with pytest.raises(ValueError, match='real content'):
         load_locked_datasets(root, dataset, data, pool)
+
+
+def test_a4_dataset_supplies_pixels_metadata_and_same_class_real_partners(tmp_path):
+    from geobench.training_data import ImageDataset
+    real = tmp_path/'real'; real.mkdir(); artifacts=tmp_path/'artifacts'; artifacts.mkdir()
+    a=real/'a.png'; b=artifacts/'b.png'
+    Image.new('RGB',(8,8),'red').save(a); Image.new('RGB',(8,8),'blue').save(b)
+    groups=[{'class_id':'7','n_original':'2','n_train':'1'}]
+    data=ImageDataset([row(a,'real'),row(b,'final_synthetic')],real,artifacts,groups=groups,mixup=True)
+    anchor=data[1]
+    assert anchor['image_id']=='b' and anchor['sample_type']=='final_synthetic'
+    assert anchor['n_original']==2 and anchor['n_train']==1 and anchor['labels']==7
+    assert float(anchor['images'].min()) >= 0 and float(anchor['images'].max()) <= 1
+    partners=data.real_pool([7])
+    assert partners[7]['ids']==['a'] and partners[7]['images'].shape==(1,3,384,896)

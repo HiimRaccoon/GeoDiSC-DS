@@ -1,0 +1,82 @@
+import csv
+import json
+import torch
+import pytest
+from PIL import Image
+from geobench.artifacts import claim_writer, staging_path, publish_lock, sha256_file, verify_lock
+from geobench.images import decoded_pixel_sha256
+
+
+def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path, monkeypatch):
+    from geobench import training
+    from torch.utils.data import DataLoader
+    root=tmp_path/'root'; root.mkdir(); dataset=tmp_path/'dataset'; dataset.mkdir()
+    image=dataset/'a.png'; Image.new('RGB',(8,8),'red').save(image)
+    entry={'image_id':'a','relative_path':'a.png','class_name':'x','class_id':'0','split':'train',
+           'sha256':sha256_file(image),'decoded_pixel_sha256':decoded_pixel_sha256(image),'is_synthetic':'false'}
+    def locked(relative, identity, files, dependencies=None, name='lock.json'):
+        dest=root/relative; token=claim_writer(dest,identity); stage=staging_path(dest,token)
+        for filename,content in files.items():
+            path=stage/filename; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(content)
+        lock=publish_lock(dest,{'identity':identity,'files':list(files),'dependencies':dependencies or {},
+                                'artifact_root':root,'claim':token,'lock_name':name})
+        return {'path':lock.relative_to(root).as_posix(),'sha256':sha256_file(lock),'identity':identity}
+    import io
+    def table(rows):
+        out=io.StringIO(newline=''); writer=csv.DictWriter(out,list(rows[0]));writer.writeheader();writer.writerows(rows);return out.getvalue().encode()
+    groups=[{'class_id':'0','class_name':'x','n_original':'2','n_train':'1','group':'extreme-tail'}]
+    fingerprint='a'*64
+    from geobench.config import verified_configuration
+    readiness=locked('deployment/data_readiness','data-readiness',{'V01.json':json.dumps({'dataset_root':str(dataset)}).encode()})
+    data=locked('splits','common-data:'+fingerprint,{'train.csv':table([entry]),'val.csv':table([{**entry,'split':'val'}]),
+        'class_groups.csv':table(groups),'configuration.json':json.dumps(verified_configuration()).encode()}, {readiness['path']:readiness['sha256']})
+    pool=locked('pools/E0','e0:'+fingerprint,{'pool.json':json.dumps({'manifest_sha256':sha256_file(root/'splits/train.csv')}).encode()},
+                {data['path']:data['sha256']},'pool_lock.json')
+    weights=locked('models/efficientnet','classifier-weights',{'weights.pt':b'fixture weights'})
+    runtime=locked('runtime','shared-runtime',{'runtime.json':json.dumps({'weights':'models/efficientnet/weights.pt',
+        'weights_sha256':sha256_file(root/'models/efficientnet/weights.pt')}).encode()}, {weights['path']:weights['sha256']})
+    def model(): return torch.nn.Sequential(torch.nn.AdaptiveAvgPool2d(1),torch.nn.Flatten(),torch.nn.Linear(3,124))
+    buffer=io.BytesIO();torch.save(model().state_dict(),buffer)
+    initial=locked('initializations/seed_42','initialization:42',{'initial_state.pt':buffer.getvalue()}, {runtime['path']:runtime['sha256']})
+    spec=locked('specs/E0','spec:E0',{'spec.json':b'{}'})
+    run=root/'runs/E0/seed_42';run.mkdir(parents=True)
+    (run/'descriptor.json').write_text(json.dumps({'run_id':'E0/42','condition':'E0','seed':42,
+        'dependencies':{'data':data,'pool':pool,'runtime':runtime,'initialization':initial,'spec':spec}}))
+    monkeypatch.setattr(training,'_require_classifier_runtime',lambda seed: None)
+    import geobench.classifier as classifier
+    monkeypatch.setattr(classifier,'build_classifier',lambda *args,**kwargs:model())
+    def fixture_loaders(train,val,*,seed):
+        generator=torch.Generator().manual_seed(seed)
+        return DataLoader(train,batch_size=1,shuffle=True,generator=generator),DataLoader(val,batch_size=1),generator
+    import geobench.training_data as td
+    monkeypatch.setattr(td,'make_loaders',fixture_loaders)
+    attempts=[]
+    def fixture_train(*args,**kwargs):
+        kwargs['device']='cpu'
+        if not attempts:
+            attempts.append('interrupted')
+            def interrupt(epoch):
+                if epoch==2: raise RuntimeError('fixture interruption')
+            kwargs['on_epoch']=interrupt
+        return training._train_epochs(*args,**kwargs)
+    monkeypatch.setattr(training,'train_epochs',fixture_train)
+    with pytest.raises(RuntimeError, match='fixture interruption'):
+        training.train_run(root,'E0/42',owner_token='fixture')
+    assert not (run/'checkpoint_lock.json').exists()
+    lock=training.train_run(root,'E0/42',owner_token='fixture')
+    record=verify_lock(lock,boundary=root)
+    assert record['identity'].startswith('run:E0/42:')
+    assert {'best_checkpoint.pt','last_checkpoint.pt','history.json','validation_at_best.json'} <= set(record['files'])
+    assert record['dependencies'][readiness['path']]==readiness['sha256']
+    assert len(json.loads((run/'history.json').read_text()))==20
+    assert training.train_run(root,'E0/42',owner_token='fixture')==lock
+    (run/'descriptor.json').write_text((run/'descriptor.json').read_text()+' ')
+    with pytest.raises(ValueError,match='identity'):
+        training.train_run(root,'E0/42',owner_token='fixture')
+
+
+def test_training_cli_requires_owner(tmp_path,monkeypatch):
+    from geobench.cli import main
+    monkeypatch.delenv('GEOBENCH_OWNER_TOKEN',raising=False)
+    with pytest.raises(ValueError,match='owner'):
+        main(['train','--root',str(tmp_path),'--run','E0/42'])

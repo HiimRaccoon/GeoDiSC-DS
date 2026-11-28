@@ -11,10 +11,20 @@ from .images import classifier_geometry, decode, decoded_pixel_sha256, normalize
 
 
 class ImageDataset(Dataset):
-    def __init__(self, rows, dataset_root, artifact_root):
+    def __init__(self, rows, dataset_root, artifact_root, *, groups=None, mixup=False):
         self.dataset_root = Path(dataset_root).resolve(strict=True)
         self.artifact_root = Path(artifact_root).resolve(strict=True)
         self.rows = []
+        self.mixup = mixup
+        self.groups = {}
+        if mixup:
+            if groups is None:
+                raise ValueError('Mixup requires class groups')
+            for group in groups:
+                class_id = int(group['class_id'])
+                if class_id in self.groups:
+                    raise ValueError('duplicate class group')
+                self.groups[class_id] = (int(group['n_original']), int(group['n_train']))
         seen = set()
         for row in rows:
             item = dict(row)
@@ -36,7 +46,9 @@ class ImageDataset(Dataset):
             for key in ('sha256', 'decoded_pixel_sha256'):
                 if not isinstance(item.get(key), str) or len(item[key]) != 64 or any(c not in '0123456789abcdef' for c in item[key]):
                     raise ValueError('invalid image hash')
-            self.rows.append((path, label, item['sha256'], item['decoded_pixel_sha256']))
+            if mixup and label not in self.groups:
+                raise ValueError('missing class group')
+            self.rows.append((path, label, item['sha256'], item['decoded_pixel_sha256'], image_id, kind))
         if not self.rows:
             raise ValueError('empty dataset')
 
@@ -44,10 +56,28 @@ class ImageDataset(Dataset):
         return len(self.rows)
 
     def __getitem__(self, index):
-        path, label, file_hash, pixel_hash = self.rows[index]
+        path, label, file_hash, pixel_hash, image_id, kind = self.rows[index]
         if sha256_file(path) != file_hash or decoded_pixel_sha256(path) != pixel_hash:
             raise ValueError('image hash mismatch')
-        return normalize_classifier(classifier_geometry(decode(path))), label
+        image = classifier_geometry(decode(path))
+        if self.mixup:
+            n_original, n_train = self.groups[label]
+            return {'images':image, 'labels':label, 'image_id':image_id, 'sample_type':kind,
+                    'n_original':n_original, 'n_train':n_train}
+        return normalize_classifier(image), label
+
+    def real_pool(self, labels):
+        if not self.mixup:
+            raise ValueError('real partner lookup requires Mixup mode')
+        requested = set(int(label) for label in labels)
+        result = {}
+        for index, (_, label, _, _, image_id, kind) in enumerate(self.rows):
+            if label in requested and kind == 'real':
+                group = result.setdefault(label, {'images':[], 'ids':[]})
+                group['images'].append(self[index]['images']); group['ids'].append(image_id)
+        for group in result.values():
+            group['images'] = torch.stack(group['images'])
+        return result
 
 
 def _seed_worker(worker_id):
@@ -68,7 +98,7 @@ def make_loaders(train_dataset, validation_dataset, *, seed):
     return train, validation, generator
 
 
-def load_locked_datasets(root, dataset_root, data_lock, pool_lock):
+def load_locked_datasets(root, dataset_root, data_lock, pool_lock, *, mixup=False):
     """Load train and validation membership only from verified pool/data locks."""
     import csv
     import json
@@ -114,4 +144,9 @@ def load_locked_datasets(root, dataset_root, data_lock, pool_lock):
             source = original[row['image_id']]
             if any(row.get(key) != source.get(key) for key in ('relative_path', 'class_id', 'sha256', 'decoded_pixel_sha256')):
                 raise ValueError('training pool real content mismatch')
-    return ImageDataset(train, dataset_root, root), ImageDataset(val, dataset_root, root)
+    groups = None
+    if mixup:
+        if 'class_groups.csv' not in data['files']:
+            raise ValueError('class groups not locked')
+        groups = read(data_lock.parent / 'class_groups.csv')
+    return ImageDataset(train, dataset_root, root, groups=groups, mixup=mixup), ImageDataset(val, dataset_root, root)
