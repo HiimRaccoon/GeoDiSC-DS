@@ -102,6 +102,32 @@ def test_official_run_trains_resumes_and_publishes_verified_checkpoint(tmp_path,
     assert any(event['event']=='resume' for event in metadata['execution_history'])
     assert json.loads((run/'metrics.json').read_text())['test'] is None
     assert training.train_run(root,'E0/42',owner_token='fixture')==lock
+    e1=locked('pools/E1','e1',{'manifest.csv':b'image_id\n'},
+              {data['path']:data['sha256'],pool['path']:pool['sha256']},'pool_lock.json')
+    locked('specs/E1E2','spec:E1E2',{'spec.json':b'{}'})
+    for seed in (123,2026):
+        locked(f'initializations/seed_{seed}',f'initialization:{seed}',{'initial_state.pt':buffer.getvalue()},
+               {runtime['path']:runtime['sha256']})
+    for strength in (.25,.35,.5):
+        locked(f'pools/E1E2/candidates/strength_{strength}',f'candidate-pool:{strength}',
+               {'manifest.csv':table([{**entry,'sample_type':'real'}])},
+               {data['path']:data['sha256'],pool['path']:pool['sha256'],e1['path']:e1['sha256']},'pool_lock.json')
+    from geobench.tuning import prepare_tuning
+    protocol=prepare_tuning(root,owner_token='fixture')
+    monkeypatch.setattr(td,'classifier_geometry',lambda image: torch.ones(3,8,8)*.5)
+    references=[]
+    for strength in (.25,.35,.5):
+        for seed in (42,123,2026):
+            tuning_lock=training.train_tuning(root,strength,seed,owner_token='fixture')
+            tuning_record=verify_lock(tuning_lock,boundary=root)
+            assert tuning_record['identity']==f'tuning:E2:{strength}:{seed}'
+            assert tuning_record['dependencies']['tuning/E2/lock.json']==sha256_file(protocol)
+            assert len(json.loads((tuning_lock.parent/'history.json').read_text()))==20
+            references.append({'strength':strength,'seed':seed,'path':tuning_lock.relative_to(root).as_posix(),
+                               'sha256':sha256_file(tuning_lock)})
+    assert training.train_tuning(root,.25,42,owner_token='fixture')==root/references[0]['path']
+    from geobench.selection import select_strength_from_locks
+    assert select_strength_from_locks(root,references)['strength']==.25
     (run/'descriptor.json').write_text((run/'descriptor.json').read_text()+' ')
     with pytest.raises(ValueError,match='identity'):
         training.train_run(root,'E0/42',owner_token='fixture')

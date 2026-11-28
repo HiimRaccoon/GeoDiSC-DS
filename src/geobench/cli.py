@@ -30,6 +30,14 @@ def main(argv=None):
     train = commands.add_parser('train')
     train.add_argument('--root', required=True, type=Path)
     train.add_argument('--run', required=True)
+    tune = commands.add_parser('prepare-tuning')
+    tune.add_argument('--root', required=True, type=Path)
+    tune_run = commands.add_parser('train-tuning')
+    tune_run.add_argument('--root', required=True, type=Path)
+    tune_run.add_argument('--strength', required=True, type=float, choices=(.25,.35,.5))
+    tune_run.add_argument('--seed', required=True, type=int, choices=(42,123,2026))
+    select = commands.add_parser('select-tuning')
+    select.add_argument('--root', required=True, type=Path)
     args = parser.parse_args(argv)
     if args.command == 'verify':
         print(json.dumps(verify_lock(args.lock, boundary=args.root), sort_keys=True))
@@ -64,4 +72,20 @@ def main(argv=None):
     elif args.command == 'train':
         from .training import train_run
         print(train_run(args.root,args.run,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'prepare-tuning':
+        from .tuning import prepare_tuning
+        print(prepare_tuning(args.root,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'train-tuning':
+        from .training import train_tuning
+        print(train_tuning(args.root,args.strength,args.seed,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
+    elif args.command == 'select-tuning':
+        from .artifacts import sha256_file
+        from .selection import publish_strength_selection
+        from .tuning import STRENGTHS, SEEDS
+        references=[]
+        for strength in STRENGTHS:
+            for seed in SEEDS:
+                path=f'tuning/E2/strength_{strength}/seed_{seed}/checkpoint_lock.json'
+                references.append({'strength':strength,'seed':seed,'path':path,'sha256':sha256_file(args.root/path)})
+        print(publish_strength_selection(args.root,references,owner_token=os.environ.get('GEOBENCH_OWNER_TOKEN')))
     return 0

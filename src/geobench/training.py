@@ -200,6 +200,15 @@ def _require_classifier_runtime(seed):
 
 def train_run(root, run_id, *, owner_token):
     """Train one frozen official run and publish its completed checkpoints."""
+    return _train_run(root,run_id,owner_token=owner_token)
+
+
+def train_tuning(root, strength, seed, *, owner_token):
+    """Train one of the nine frozen E2 search identities using the shared trainer."""
+    return _train_run(root,None,owner_token=owner_token,tuning=(strength,seed))
+
+
+def _train_run(root, run_id, *, owner_token, tuning=None):
     import csv
     import io
     import hashlib
@@ -218,13 +227,23 @@ def train_run(root, run_id, *, owner_token):
     if not isinstance(owner_token, str) or not owner_token:
         raise ValueError('owner token required')
     root = Path(root).resolve(strict=True)
-    descriptor = resolve_run(root, run_id)
-    condition, seed = descriptor['condition'], descriptor['seed']
-    target = root/'runs'/condition/f'seed_{seed}'
-    descriptor_path = target/'descriptor.json'
-    descriptor_bytes = descriptor_path.read_bytes()
+    if tuning is None:
+        descriptor = resolve_run(root, run_id)
+        condition, seed = descriptor['condition'], descriptor['seed']
+        target = root/'runs'/condition/f'seed_{seed}'
+        descriptor_path = target/'descriptor.json'
+        descriptor_bytes = descriptor_path.read_bytes()
+    else:
+        from .tuning import resolve_tuning
+        strength, seed = tuning
+        candidate = resolve_tuning(root,strength,seed)
+        condition='E1E2'; run_id=f'tuning/E2/{strength}/{seed}'
+        descriptor={'run_id':run_id,'condition':condition,**candidate}
+        target=root/'tuning/E2'/f'strength_{strength}'/f'seed_{seed}'
+        descriptor_path=None
+        descriptor_bytes=(json.dumps(descriptor,sort_keys=True,separators=(',', ':'),allow_nan=False)+'\n').encode()
     descriptor_hash = hashlib.sha256(descriptor_bytes).hexdigest()
-    identity = f'run:{run_id}:{descriptor_hash}'
+    identity = f'run:{run_id}:{descriptor_hash}' if tuning is None else f'tuning:E2:{strength}:{seed}'
     readiness_path = root/'deployment/data_readiness/lock.json'
     readiness = verify_lock(readiness_path, boundary=root)
     if readiness['identity'] != 'data-readiness' or 'V01.json' not in readiness['files']:
@@ -233,11 +252,14 @@ def train_run(root, run_id, *, owner_token):
     if root == dataset_root or root.is_relative_to(dataset_root) or dataset_root.is_relative_to(root):
         raise ValueError('dataset and artifact roots must be separate')
     dependencies = {item['path']:item['sha256'] for item in descriptor['dependencies'].values()}
+    if tuning is not None:
+        dependencies['tuning/E2/lock.json']=sha256_file(root/'tuning/E2/lock.json')
     dependencies[readiness_path.relative_to(root).as_posix()] = sha256_file(readiness_path)
     existing = target/'checkpoint_lock.json'
     if existing.exists():
         locked = verify_lock(existing,boundary=root)
-        if locked['identity'] != identity or locked['dependencies'] != dependencies:
+        if (locked['identity'] != identity or locked['dependencies'] != dependencies
+                or locked['files'].get('run_descriptor.json') != descriptor_hash):
             raise ValueError('published checkpoint identity mismatch')
         return existing
     _require_classifier_runtime(seed)
@@ -301,7 +323,7 @@ def train_run(root, run_id, *, owner_token):
                 raise
             if state['completed_epoch'] != 20 or state['global_step'] != 20*state['steps_per_epoch'] or len(state['history']) != 20:
                 raise ValueError('training run incomplete')
-            if sha256_file(descriptor_path) != descriptor_hash:
+            if descriptor_path is not None and sha256_file(descriptor_path) != descriptor_hash:
                 raise ValueError('run descriptor changed during training')
             def write_json(name, value):
                 complete_temporary(stage/name,(json.dumps(value,sort_keys=True,separators=(',', ':'),allow_nan=False)+'\n').encode())
